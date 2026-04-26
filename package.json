@@ -4,12 +4,15 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:client\"",
+    "dev": "concurrently -k \"npm:dev:worker\" \"npm:dev:client\"",
     "dev:client": "vite",
     "dev:server": "node --import tsx server/index.ts",
-    "build": "npm run build:server && npm run build:client",
+    "dev:worker": "wrangler dev --local --test-scheduled --port 8787",
+    "build": "npm run build:client && npm run typecheck:worker",
     "build:client": "tsc --noEmit && vite build",
     "build:server": "tsc -p tsconfig.server.json",
+    "typecheck:worker": "tsc -p tsconfig.worker.json --noEmit",
+    "deploy:worker": "npm run build:client && wrangler deploy",
     "preview": "vite preview",
     "start:server": "node server-dist/index.js"
   },
@@ -29,10 +32,12 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/three": "^0.160.0",
+    "@cloudflare/workers-types": "^4.20260416.0",
     "@vitejs/plugin-react": "^4.3.3",
     "concurrently": "^9.1.2",
     "typescript": "^5.6.3",
     "tsx": "^4.19.2",
-    "vite": "^5.4.10"
+    "vite": "^5.4.10",
+    "wrangler": "^4.16.0"
   }
 }

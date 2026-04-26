@@ -1,0 +1,36 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "sidecar-flight-monitor",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-04-26",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "FLIGHT_CACHE"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "SNAPSHOT_ARCHIVE",
+      "bucket_name": "sidecar-flight-monitor-snapshots"
+    }
+  ],
+  "vars": {
+    "UPSTREAM_BASE_URL": "https://flight-viz.com",
+    "UPSTREAM_PROXY_BASE_URL": "https://flight-viz-proxy.flight-viz.workers.dev",
+    "SNAPSHOT_TTL_SECONDS": "90",
+    "DETAIL_TTL_SECONDS": "1800",
+    "SEARCH_TTL_SECONDS": "300",
+    "ENABLE_SNAPSHOT_ARCHIVE": "true"
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  }
+}
