@@ -383,6 +383,8 @@ input {
 
 .map-frame {
   position: relative;
+  aspect-ratio: 1320 / 720;
+  min-height: clamp(360px, 58vh, 760px);
   border: 1px solid rgba(129, 213, 250, 0.1);
   background:
     radial-gradient(circle at 45% 15%, rgba(94, 244, 205, 0.08), transparent 18%),
@@ -390,126 +392,21 @@ input {
   overflow: hidden;
 }
 
-.map-frame svg {
+.map-frame-webgl {
+  touch-action: none;
+  cursor: grab;
+}
+
+.map-frame-webgl:active {
+  cursor: grabbing;
+}
+
+.map-canvas {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
-  height: auto;
-  aspect-ratio: 1320 / 720;
-}
-
-.map-ocean {
-  fill: rgba(2, 10, 16, 0.96);
-}
-
-.map-graticule {
-  fill: none;
-  stroke: rgba(129, 213, 250, 0.07);
-  stroke-width: 0.9;
-}
-
-.map-land {
-  fill: rgba(180, 198, 214, 0.08);
-}
-
-.map-borders {
-  fill: none;
-  stroke: rgba(129, 213, 250, 0.14);
-  stroke-width: 0.7;
-}
-
-.route-trail,
-.route-prediction {
-  fill: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.route-trail {
-  stroke: url(#trail-gradient);
-  stroke-width: 2.4;
-  stroke-dasharray: 16 8;
-  animation: routeFlow 11s linear infinite;
-}
-
-.route-prediction {
-  stroke: url(#projection-gradient);
-  stroke-width: 1.35;
-  stroke-dasharray: 6 7;
-}
-
-@keyframes routeFlow {
-  to {
-    stroke-dashoffset: -160;
-  }
-}
-
-.airport-marker circle:first-child {
-  fill: rgba(129, 213, 250, 0.06);
-  stroke: rgba(129, 213, 250, 0.58);
-  stroke-width: 1.2;
-}
-
-.airport-core {
-  fill: var(--accent);
-}
-
-.airport-core.destination {
-  fill: var(--accent-cold);
-}
-
-.flight-point {
-  cursor: pointer;
-}
-
-.flight-hitbox {
-  fill: transparent;
-}
-
-.flight-glow {
-  opacity: 0.5;
-}
-
-.flight-core {
-  fill: currentColor;
-}
-
-.flight-point.tone-ground {
-  color: rgba(255, 211, 109, 0.92);
-}
-
-.flight-point.tone-climbing,
-.flight-point.tone-descending {
-  color: rgba(129, 213, 250, 0.96);
-}
-
-.flight-point.tone-approach {
-  color: rgba(255, 126, 131, 0.92);
-}
-
-.flight-point.tone-cruise {
-  color: rgba(94, 244, 205, 0.96);
-}
-
-.flight-point.is-selected .flight-core {
-  fill: #ffffff;
-}
-
-.flight-pulse {
-  fill: none;
-  stroke: rgba(255, 255, 255, 0.54);
-  stroke-width: 1;
-  animation: ping 1.9s ease-out infinite;
-}
-
-@keyframes ping {
-  0% {
-    opacity: 0.8;
-    transform: scale(0.7);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(1.45);
-  }
+  height: 100%;
 }
 
 .map-overlay {

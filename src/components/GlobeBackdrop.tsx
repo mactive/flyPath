@@ -24,7 +24,7 @@ export function GlobeBackdrop() {
     camera.position.z = 26;
 
     const starGeometry = new THREE.BufferGeometry();
-    const starCount = 1400;
+    const starCount = 700;
     const positions = new Float32Array(starCount * 3);
     const colors = new Float32Array(starCount * 3);
 

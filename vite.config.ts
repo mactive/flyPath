@@ -5,16 +5,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      "/api/states/all": {
-        target: "https://flight-viz.com",
+      "/api": {
+        target: "http://127.0.0.1:8787",
         changeOrigin: true,
         secure: true
-      },
-      "/proxy": {
-        target: "https://flight-viz-proxy.flight-viz.workers.dev",
-        changeOrigin: true,
-        secure: true,
-        rewrite: (path) => path.replace(/^\/proxy/, "")
       }
     }
   }

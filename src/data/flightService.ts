@@ -8,14 +8,37 @@ import {
 } from "../utils/flightTransforms";
 import type { FlightDetail, FlightFeedSnapshot, FlightSearchResult, FlightSummary } from "../types/flight";
 
-async function requestJson<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(url, { signal });
+const API_BASE = import.meta.env.VITE_API_BASE ?? (import.meta.env.DEV ? "http://127.0.0.1:8787" : "");
 
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+function describeHtmlPayload(payload: string): string {
+  const normalized = payload.trim().toLowerCase();
+
+  if (normalized.startsWith("<!doctype") || normalized.startsWith("<html")) {
+    return "API returned HTML instead of JSON. Start the Hono server with `npm run dev` or serve the built app with `npm run start:server`.";
   }
 
-  return response.json() as Promise<T>;
+  return `Unexpected response payload: ${payload.slice(0, 120)}`;
+}
+
+async function requestJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(`${API_BASE}${url}`, { signal });
+  const contentType = response.headers.get("content-type") ?? "";
+  const raw = await response.text();
+
+  if (!response.ok) {
+    const message = raw ? `${response.status} ${describeHtmlPayload(raw)}` : `Request failed: ${response.status}`;
+    throw new Error(message);
+  }
+
+  if (!contentType.includes("application/json")) {
+    throw new Error(describeHtmlPayload(raw));
+  }
+
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    throw new Error(describeHtmlPayload(raw));
+  }
 }
 
 export async function fetchFlightFeed(signal?: AbortSignal): Promise<FlightFeedSnapshot> {
@@ -25,7 +48,7 @@ export async function fetchFlightFeed(signal?: AbortSignal): Promise<FlightFeedS
 
 export async function searchFlight(query: string, signal?: AbortSignal): Promise<FlightSearchResult[]> {
   const payload = await requestJson<RawSearchResponse>(
-    "/proxy/fr24/search?query=" + encodeURIComponent(query) + "&limit=8",
+    "/api/fr24/search?query=" + encodeURIComponent(query) + "&limit=8",
     signal
   );
   return normalizeSearchResults(payload);
@@ -33,7 +56,7 @@ export async function searchFlight(query: string, signal?: AbortSignal): Promise
 
 export async function fetchFlightDetailById(flightId: string, signal?: AbortSignal): Promise<FlightDetail> {
   const payload = await requestJson<RawDetailResponse>(
-    "/proxy/fr24/detail?flight=" + encodeURIComponent(flightId) + "&version=1.5",
+    "/api/fr24/detail?flight=" + encodeURIComponent(flightId) + "&version=1.5",
     signal
   );
 

@@ -2,12 +2,15 @@ import { geoInterpolate } from "d3-geo";
 import type { GeoProjection } from "d3-geo";
 import type { FlightDetail, FlightRoutePoint } from "../types/flight";
 
-export interface ProjectedPoint {
+export const MAP_WIDTH = 1320;
+export const MAP_HEIGHT = 720;
+
+export interface WorldPoint {
   x: number;
   y: number;
 }
 
-function projectPoint(projection: GeoProjection, longitude: number, latitude: number): ProjectedPoint | null {
+export function projectToWorld(projection: GeoProjection, longitude: number, latitude: number): WorldPoint | null {
   const projected = projection([longitude, latitude]);
 
   if (!projected) {
@@ -15,30 +18,19 @@ function projectPoint(projection: GeoProjection, longitude: number, latitude: nu
   }
 
   return {
-    x: projected[0],
-    y: projected[1]
+    x: projected[0] - MAP_WIDTH / 2,
+    y: MAP_HEIGHT / 2 - projected[1]
   };
 }
 
-function buildSvgPath(points: ProjectedPoint[]): string {
-  if (points.length === 0) {
-    return "";
-  }
-
-  return points
-    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
-    .join(" ");
+export function buildTrailWorldPoints(detail: FlightDetail, projection: GeoProjection): WorldPoint[] {
+  return detail.trail
+    .map((point) => projectToWorld(projection, point.lng, point.lat))
+    .filter((point): point is WorldPoint => point !== null)
+    .reverse();
 }
 
-export function buildTrailPath(detail: FlightDetail, projection: GeoProjection): string {
-  const points = detail.trail
-    .map((point) => projectPoint(projection, point.lng, point.lat))
-    .filter((point): point is ProjectedPoint => point !== null);
-
-  return buildSvgPath(points.reverse());
-}
-
-export function buildPredictionPath(detail: FlightDetail, projection: GeoProjection): string {
+export function buildPredictionWorldPoints(detail: FlightDetail, projection: GeoProjection): WorldPoint[] {
   const startPoint = detail.trail[0] ?? {
     lat: detail.origin.latitude,
     lng: detail.origin.longitude
@@ -54,17 +46,15 @@ export function buildPredictionPath(detail: FlightDetail, projection: GeoProject
     return { lat, lng };
   });
 
-  const projected = points
-    .map((point) => projectPoint(projection, point.lng, point.lat))
-    .filter((point): point is ProjectedPoint => point !== null);
-
-  return buildSvgPath(projected);
+  return points
+    .map((point) => projectToWorld(projection, point.lng, point.lat))
+    .filter((point): point is WorldPoint => point !== null);
 }
 
 export function projectAirport(
   projection: GeoProjection,
   longitude: number,
   latitude: number
-): ProjectedPoint | null {
-  return projectPoint(projection, longitude, latitude);
+): WorldPoint | null {
+  return projectToWorld(projection, longitude, latitude);
 }
