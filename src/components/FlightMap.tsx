@@ -1,23 +1,20 @@
-import { geoGraticule10, geoNaturalEarth1, geoPath, type GeoProjection } from "d3-geo";
-import { feature, mesh } from "topojson-client";
-import worldAtlasUrl from "world-atlas/countries-50m.json?url";
-import { useEffect, useMemo, useRef } from "react";
-import * as THREE from "three";
-import {
-  MAP_HEIGHT,
-  MAP_WIDTH,
-  buildPredictionWorldPoints,
-  buildTrailWorldPoints,
-  projectAirport,
-  projectToWorld
-} from "../utils/geo";
+import maplibregl, { type GeoJSONSource, type LngLatBoundsLike, type Map as MapLibreMap } from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
+import { Protocol } from "pmtiles";
+import { useEffect, useRef } from "react";
+import { buildPredictionCoordinates, buildTrailCoordinates, type LngLatTuple } from "../utils/geo";
 import type { FlightDetail, FlightSummary } from "../types/flight";
 
-interface AtlasTopology {
-  objects: {
-    countries: object;
-  };
-}
+const DEFAULT_STYLE_URL = import.meta.env.VITE_MAP_STYLE_URL ?? "https://demotiles.maplibre.org/style.json";
+const FLIGHTS_SOURCE_ID = "flights";
+const SELECTED_SOURCE_ID = "selected-flight";
+const TRAIL_SOURCE_ID = "flight-trail";
+const PROJECTION_SOURCE_ID = "flight-projection";
+const AIRPORT_SOURCE_ID = "flight-airports";
+const CURSOR_SOURCE_ID = "flight-route-cursor";
+
+const pmtilesProtocol = new Protocol();
+let pmtilesRegistered = false;
 
 interface FlightMapProps {
   flights: FlightSummary[];
@@ -25,225 +22,326 @@ interface FlightMapProps {
   selectedDetail: FlightDetail | null;
   onSelectFlight: (flight: FlightSummary) => void;
   refreshing: boolean;
+  activeCountry: string | null;
 }
 
-interface ProjectedFlight extends FlightSummary {
-  worldX: number;
-  worldY: number;
-}
-
-interface SceneBundle {
-  renderer: THREE.WebGLRenderer;
-  scene: THREE.Scene;
-  camera: THREE.OrthographicCamera;
-  flightPoints: THREE.Points;
-  flightGeometry: THREE.BufferGeometry;
-  raycaster: THREE.Raycaster;
-  selectedMarker: THREE.Group;
-  originMarker: THREE.Group;
-  destinationMarker: THREE.Group;
-  trailLine: THREE.Line;
-  projectionLine: THREE.Line;
-  routeCursor: THREE.Mesh;
-  routeAnimationPoints: THREE.Vector3[];
-  projectedFlights: ProjectedFlight[];
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
-}
-
-function toneColor(tone: FlightSummary["tone"]): THREE.ColorRepresentation {
-  switch (tone) {
-    case "ground":
-      return "#ffd36d";
-    case "climbing":
-    case "descending":
-      return "#81d5fa";
-    case "approach":
-      return "#ff7e83";
-    default:
-      return "#5ef4cd";
+function ensurePmtilesProtocol() {
+  if (!pmtilesRegistered) {
+    maplibregl.addProtocol("pmtiles", pmtilesProtocol.tile);
+    pmtilesRegistered = true;
   }
 }
 
-function buildProjection(): GeoProjection {
-  return geoNaturalEarth1()
-    .fitExtent(
-      [
-        [20, 24],
-        [MAP_WIDTH - 20, MAP_HEIGHT - 24]
-      ],
-      { type: "Sphere" }
-    )
-    .precision(0.1);
+function emptyFeatureCollection<T extends GeoJSON.Geometry>(): GeoJSON.FeatureCollection<T> {
+  return {
+    type: "FeatureCollection",
+    features: []
+  };
 }
 
-function createDotTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement("canvas");
-  canvas.width = 64;
-  canvas.height = 64;
-  const context = canvas.getContext("2d");
-
-  if (!context) {
-    throw new Error("Unable to create point texture");
+function getSource<T extends GeoJSON.Geometry>(
+  map: MapLibreMap | null,
+  id: string
+): GeoJSONSource | null {
+  if (!map || !map.getSource(id)) {
+    return null;
   }
 
-  const gradient = context.createRadialGradient(32, 32, 4, 32, 32, 28);
-  gradient.addColorStop(0, "rgba(255,255,255,1)");
-  gradient.addColorStop(0.45, "rgba(255,255,255,0.9)");
-  gradient.addColorStop(1, "rgba(255,255,255,0)");
-  context.fillStyle = gradient;
-  context.fillRect(0, 0, 64, 64);
-
-  return new THREE.CanvasTexture(canvas);
+  return map.getSource(id) as GeoJSONSource;
 }
 
-function createMapTexture(
-  projection: GeoProjection,
-  countriesData: GeoJSON.FeatureCollection
-): THREE.CanvasTexture {
-  const canvas = document.createElement("canvas");
-  canvas.width = MAP_WIDTH * 2;
-  canvas.height = MAP_HEIGHT * 2;
-  const context = canvas.getContext("2d");
-
-  if (!context) {
-    throw new Error("Unable to create map texture");
-  }
-
-  context.scale(2, 2);
-  context.fillStyle = "rgba(2, 10, 16, 0.98)";
-  context.fillRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
-
-  const path = geoPath(projection, context);
-
-  context.beginPath();
-  path(countriesData);
-  context.fillStyle = "rgba(180, 198, 214, 0.10)";
-  context.fill();
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.needsUpdate = true;
-  return texture;
-}
-
-async function loadAtlasData() {
-  const atlas = (await fetch(worldAtlasUrl).then((response) => response.json())) as AtlasTopology;
-
-  const countriesData = feature(
-    atlas as never,
-    atlas.objects.countries as never
-  ) as unknown as GeoJSON.FeatureCollection;
-  const countryBorders = mesh(
-    atlas as never,
-    atlas.objects.countries as never,
-    (left: { id?: string | number }, right: { id?: string | number }) => left.id !== right.id
-  ) as unknown as GeoJSON.MultiLineString;
-
-  return { countriesData, countryBorders };
-}
-
-function multiLineToSegmentGeometry(geometry: GeoJSON.MultiLineString, projection: GeoProjection): THREE.BufferGeometry {
-  const vertices: number[] = [];
-
-  geometry.coordinates.forEach((line) => {
-    for (let index = 1; index < line.length; index += 1) {
-      const start = projectToWorld(projection, line[index - 1][0], line[index - 1][1]);
-      const end = projectToWorld(projection, line[index][0], line[index][1]);
-
-      if (!start || !end) {
-        continue;
+function buildFlightFeatureCollection(flights: FlightSummary[]): GeoJSON.FeatureCollection<GeoJSON.Point> {
+  return {
+    type: "FeatureCollection",
+    features: flights.map((flight) => ({
+      type: "Feature",
+      geometry: {
+        type: "Point",
+        coordinates: [flight.longitude, flight.latitude]
+      },
+      properties: {
+        id: flight.id,
+        callsign: flight.callsign,
+        country: flight.country,
+        tone: flight.tone,
+        altitudeFt: flight.altitudeFt,
+        speedKts: flight.groundSpeedKts
       }
+    }))
+  };
+}
 
-      vertices.push(start.x, start.y, 1.2, end.x, end.y, 1.2);
+function buildSelectedFeatureCollection(flight: FlightSummary | null): GeoJSON.FeatureCollection<GeoJSON.Point> {
+  if (!flight) {
+    return emptyFeatureCollection<GeoJSON.Point>();
+  }
+
+  return {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: [flight.longitude, flight.latitude]
+        },
+        properties: {
+          id: flight.id
+        }
+      }
+    ]
+  };
+}
+
+function buildLineCollection(coordinates: LngLatTuple[]): GeoJSON.FeatureCollection<GeoJSON.LineString> {
+  if (coordinates.length < 2) {
+    return emptyFeatureCollection<GeoJSON.LineString>();
+  }
+
+  return {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates
+        },
+        properties: {}
+      }
+    ]
+  };
+}
+
+function buildAirportFeatureCollection(detail: FlightDetail | null): GeoJSON.FeatureCollection<GeoJSON.Point> {
+  if (!detail) {
+    return emptyFeatureCollection<GeoJSON.Point>();
+  }
+
+  return {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: [detail.origin.longitude, detail.origin.latitude]
+        },
+        properties: {
+          role: "origin",
+          code: detail.origin.iata
+        }
+      },
+      {
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: [detail.destination.longitude, detail.destination.latitude]
+        },
+        properties: {
+          role: "destination",
+          code: detail.destination.iata
+        }
+      }
+    ]
+  };
+}
+
+function buildCursorFeatureCollection(coordinate: LngLatTuple | null): GeoJSON.FeatureCollection<GeoJSON.Point> {
+  if (!coordinate) {
+    return emptyFeatureCollection<GeoJSON.Point>();
+  }
+
+  return {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: coordinate
+        },
+        properties: {}
+      }
+    ]
+  };
+}
+
+function interpolateCoordinate(coordinates: LngLatTuple[], progress: number): LngLatTuple | null {
+  if (coordinates.length < 2) {
+    return coordinates[0] ?? null;
+  }
+
+  const scaled = progress * (coordinates.length - 1);
+  const fromIndex = Math.floor(scaled);
+  const toIndex = Math.min(fromIndex + 1, coordinates.length - 1);
+  const alpha = scaled - fromIndex;
+  const from = coordinates[fromIndex];
+  const to = coordinates[toIndex];
+
+  return [from[0] + (to[0] - from[0]) * alpha, from[1] + (to[1] - from[1]) * alpha];
+}
+
+function createCountryBounds(flights: FlightSummary[]): LngLatBoundsLike | null {
+  if (flights.length === 0) {
+    return null;
+  }
+
+  let minLng = Infinity;
+  let minLat = Infinity;
+  let maxLng = -Infinity;
+  let maxLat = -Infinity;
+
+  flights.forEach((flight) => {
+    minLng = Math.min(minLng, flight.longitude);
+    minLat = Math.min(minLat, flight.latitude);
+    maxLng = Math.max(maxLng, flight.longitude);
+    maxLat = Math.max(maxLat, flight.latitude);
+  });
+
+  return [
+    [minLng, minLat],
+    [maxLng, maxLat]
+  ];
+}
+
+function addMapLayers(map: MapLibreMap) {
+  map.addSource(FLIGHTS_SOURCE_ID, {
+    type: "geojson",
+    data: emptyFeatureCollection<GeoJSON.Point>()
+  });
+  map.addSource(SELECTED_SOURCE_ID, {
+    type: "geojson",
+    data: emptyFeatureCollection<GeoJSON.Point>()
+  });
+  map.addSource(TRAIL_SOURCE_ID, {
+    type: "geojson",
+    data: emptyFeatureCollection<GeoJSON.LineString>()
+  });
+  map.addSource(PROJECTION_SOURCE_ID, {
+    type: "geojson",
+    data: emptyFeatureCollection<GeoJSON.LineString>()
+  });
+  map.addSource(AIRPORT_SOURCE_ID, {
+    type: "geojson",
+    data: emptyFeatureCollection<GeoJSON.Point>()
+  });
+  map.addSource(CURSOR_SOURCE_ID, {
+    type: "geojson",
+    data: emptyFeatureCollection<GeoJSON.Point>()
+  });
+
+  map.addLayer({
+    id: "flight-projection",
+    type: "line",
+    source: PROJECTION_SOURCE_ID,
+    paint: {
+      "line-color": "#81d5fa",
+      "line-width": ["interpolate", ["linear"], ["zoom"], 2, 1.2, 6, 2.2, 10, 3.4],
+      "line-opacity": 0.72,
+      "line-dasharray": [3, 2]
     }
   });
 
-  const buffer = new Float32Array(vertices);
-  const lineGeometry = new THREE.BufferGeometry();
-  lineGeometry.setAttribute("position", new THREE.BufferAttribute(buffer, 3));
-  return lineGeometry;
-}
+  map.addLayer({
+    id: "flight-trail",
+    type: "line",
+    source: TRAIL_SOURCE_ID,
+    paint: {
+      "line-color": "#5ef4cd",
+      "line-width": ["interpolate", ["linear"], ["zoom"], 2, 1.6, 6, 2.8, 10, 4.2],
+      "line-opacity": 0.86
+    }
+  });
 
-function createMarker(color: number): THREE.Group {
-  const group = new THREE.Group();
+  map.addLayer({
+    id: "flight-points",
+    type: "circle",
+    source: FLIGHTS_SOURCE_ID,
+    paint: {
+      "circle-color": [
+        "match",
+        ["get", "tone"],
+        "ground",
+        "#ffd36d",
+        "climbing",
+        "#81d5fa",
+        "descending",
+        "#81d5fa",
+        "approach",
+        "#ff7e83",
+        "#5ef4cd"
+      ],
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 1.8, 4, 2.6, 7, 4.2, 10, 6.4],
+      "circle-opacity": 0.92,
+      "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 5, 0.3, 10, 1.1],
+      "circle-stroke-color": "rgba(255,255,255,0.22)"
+    }
+  });
 
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(4.2, 6.4, 36),
-    new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: 0.4,
-      side: THREE.DoubleSide
-    })
-  );
-  const core = new THREE.Mesh(
-    new THREE.CircleGeometry(2.1, 24),
-    new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: 0.95
-    })
-  );
+  map.addLayer({
+    id: "selected-flight-glow",
+    type: "circle",
+    source: SELECTED_SOURCE_ID,
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 2, 7, 7, 11, 11, 16],
+      "circle-color": "rgba(255,255,255,0.12)",
+      "circle-stroke-width": 1,
+      "circle-stroke-color": "#ffffff"
+    }
+  });
 
-  group.add(ring);
-  group.add(core);
-  group.visible = false;
-  return group;
-}
+  map.addLayer({
+    id: "selected-flight-core",
+    type: "circle",
+    source: SELECTED_SOURCE_ID,
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 2, 2.3, 7, 3.8, 11, 5.5],
+      "circle-color": "#ffffff"
+    }
+  });
 
-function createSelectedMarker(): THREE.Group {
-  const group = new THREE.Group();
-  const outer = new THREE.Mesh(
-    new THREE.RingGeometry(6.8, 8.2, 40),
-    new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.4,
-      side: THREE.DoubleSide
-    })
-  );
-  const inner = new THREE.Mesh(
-    new THREE.CircleGeometry(2.4, 24),
-    new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.95
-    })
-  );
-  group.add(outer);
-  group.add(inner);
-  group.visible = false;
-  return group;
-}
+  map.addLayer({
+    id: "airport-points",
+    type: "circle",
+    source: AIRPORT_SOURCE_ID,
+    paint: {
+      "circle-radius": ["case", ["==", ["get", "role"], "origin"], 5.5, 5.5],
+      "circle-color": ["case", ["==", ["get", "role"], "origin"], "#5ef4cd", "#81d5fa"],
+      "circle-stroke-width": 1.25,
+      "circle-stroke-color": "rgba(255,255,255,0.8)"
+    }
+  });
 
-function clampCamera(camera: THREE.OrthographicCamera) {
-  const viewWidth = (camera.right - camera.left) / camera.zoom;
-  const viewHeight = (camera.top - camera.bottom) / camera.zoom;
-  const maxX = Math.max(0, MAP_WIDTH / 2 - viewWidth / 2);
-  const maxY = Math.max(0, MAP_HEIGHT / 2 - viewHeight / 2);
-  camera.position.x = clamp(camera.position.x, -maxX, maxX);
-  camera.position.y = clamp(camera.position.y, -maxY, maxY);
-}
+  map.addLayer({
+    id: "airport-labels",
+    type: "symbol",
+    source: AIRPORT_SOURCE_ID,
+    layout: {
+      "text-field": ["get", "code"],
+      "text-size": 11,
+      "text-offset": [0, 1.1],
+      "text-anchor": "top",
+      "text-font": ["Open Sans Semibold"]
+    },
+    paint: {
+      "text-color": "#ecfbf6",
+      "text-halo-width": 1,
+      "text-halo-color": "rgba(3,9,14,0.9)"
+    }
+  });
 
-function updateCameraFrustum(camera: THREE.OrthographicCamera, width: number, height: number) {
-  const aspect = width / height;
-  camera.left = (-MAP_HEIGHT * aspect) / 2;
-  camera.right = (MAP_HEIGHT * aspect) / 2;
-  camera.top = MAP_HEIGHT / 2;
-  camera.bottom = -MAP_HEIGHT / 2;
-  clampCamera(camera);
-  camera.updateProjectionMatrix();
-}
-
-function updateLine(line: THREE.Line, points: THREE.Vector3[], dashed = false) {
-  line.geometry.dispose();
-  line.geometry = new THREE.BufferGeometry().setFromPoints(points);
-  if (dashed) {
-    line.computeLineDistances();
-  }
+  map.addLayer({
+    id: "route-cursor",
+    type: "circle",
+    source: CURSOR_SOURCE_ID,
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 2, 3.5, 7, 5, 11, 6.8],
+      "circle-color": "#ffffff",
+      "circle-stroke-width": 1,
+      "circle-stroke-color": "#81d5fa"
+    }
+  });
 }
 
 export function FlightMap({
@@ -251,494 +349,277 @@ export function FlightMap({
   selectedFlight,
   selectedDetail,
   onSelectFlight,
-  refreshing
+  refreshing,
+  activeCountry
 }: FlightMapProps) {
-  const frameRef = useRef<HTMLDivElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const sceneRef = useRef<SceneBundle | null>(null);
-  const dragRef = useRef({
-    active: false,
-    moved: false,
-    pointerX: 0,
-    pointerY: 0
-  });
-
-  const projection = useMemo(() => buildProjection(), []);
-  const projectedFlights = useMemo(
-    () =>
-      flights
-        .map((flight) => {
-          const worldPoint = projectToWorld(projection, flight.longitude, flight.latitude);
-
-          if (!worldPoint) {
-            return null;
-          }
-
-          return {
-            ...flight,
-            worldX: worldPoint.x,
-            worldY: worldPoint.y
-          };
-        })
-        .filter((flight): flight is ProjectedFlight => flight !== null),
-    [flights, projection]
-  );
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
+  const flightsRef = useRef<FlightSummary[]>([]);
+  const selectedFlightRef = useRef<FlightSummary | null>(null);
+  const selectedDetailRef = useRef<FlightDetail | null>(null);
+  const activeCountryRef = useRef<string | null>(null);
+  const readyRef = useRef(false);
+  const activeKeysRef = useRef(new Set<string>());
+  const routeCoordinatesRef = useRef<LngLatTuple[]>([]);
+  const frameRef = useRef<number | null>(null);
+  const hasFocusedCountryRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const frame = frameRef.current;
-    const canvas = canvasRef.current;
+    flightsRef.current = flights;
+  }, [flights]);
 
-    if (!frame || !canvas) {
+  useEffect(() => {
+    selectedFlightRef.current = selectedFlight;
+  }, [selectedFlight]);
+
+  useEffect(() => {
+    selectedDetailRef.current = selectedDetail;
+  }, [selectedDetail]);
+
+  useEffect(() => {
+    activeCountryRef.current = activeCountry;
+  }, [activeCountry]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+
+    if (!container || mapRef.current) {
       return undefined;
     }
 
-    const renderer = new THREE.WebGLRenderer({
-      canvas,
-      alpha: true,
-      antialias: false,
-      powerPreference: "high-performance"
+    ensurePmtilesProtocol();
+
+    const map = new maplibregl.Map({
+      container,
+      style: DEFAULT_STYLE_URL,
+      center: [12, 20],
+      zoom: 1.35,
+      minZoom: 1,
+      maxZoom: 14,
+      attributionControl: false
     });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    const scene = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(-MAP_WIDTH / 2, MAP_WIDTH / 2, MAP_HEIGHT / 2, -MAP_HEIGHT / 2, 1, 2000);
-    camera.position.set(0, 0, 500);
-    camera.zoom = 1.08;
+    mapRef.current = map;
 
-    const flightGeometry = new THREE.BufferGeometry();
-    const flightMaterial = new THREE.PointsMaterial({
-      size: 8.5,
-      transparent: true,
-      opacity: 0.95,
-      map: createDotTexture(),
-      vertexColors: true,
-      depthWrite: false,
-      sizeAttenuation: false
-    });
-    const flightPoints = new THREE.Points(flightGeometry, flightMaterial);
-    scene.add(flightPoints);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
 
-    const trailLine = new THREE.Line(
-      new THREE.BufferGeometry(),
-      new THREE.LineBasicMaterial({
-        color: 0x5ef4cd,
-        transparent: true,
-        opacity: 0.82
-      })
-    );
-    const projectionLine = new THREE.Line(
-      new THREE.BufferGeometry(),
-      new THREE.LineDashedMaterial({
-        color: 0x81d5fa,
-        dashSize: 14,
-        gapSize: 8,
-        transparent: true,
-        opacity: 0.68
-      })
-    );
-    trailLine.visible = false;
-    projectionLine.visible = false;
-    scene.add(trailLine);
-    scene.add(projectionLine);
-
-    const selectedMarker = createSelectedMarker();
-    const originMarker = createMarker(0x5ef4cd);
-    const destinationMarker = createMarker(0x81d5fa);
-    const routeCursor = new THREE.Mesh(
-      new THREE.SphereGeometry(3.2, 24, 24),
-      new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.92
-      })
-    );
-    routeCursor.visible = false;
-
-    scene.add(selectedMarker);
-    scene.add(originMarker);
-    scene.add(destinationMarker);
-    scene.add(routeCursor);
-
-    const raycaster = new THREE.Raycaster();
-    const keyboardState = new Set<string>();
-
-    const bundle: SceneBundle = {
-      renderer,
-      scene,
-      camera,
-      flightPoints,
-      flightGeometry,
-      raycaster,
-      selectedMarker,
-      originMarker,
-      destinationMarker,
-      trailLine,
-      projectionLine,
-      routeCursor,
-      routeAnimationPoints: [],
-      projectedFlights: []
-    };
-
-    sceneRef.current = bundle;
-
-    let mapTexture: THREE.CanvasTexture | null = null;
-    let mapMesh: THREE.Mesh | null = null;
-    let graticuleLines: THREE.LineSegments | null = null;
-    let borderLines: THREE.LineSegments | null = null;
-    let disposed = false;
-
-    void loadAtlasData().then(({ countriesData, countryBorders }) => {
-      if (disposed) {
+      if (target && ["INPUT", "TEXTAREA"].includes(target.tagName)) {
         return;
       }
 
-      mapTexture = createMapTexture(projection, countriesData);
-      mapMesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(MAP_WIDTH, MAP_HEIGHT),
-        new THREE.MeshBasicMaterial({
-          map: mapTexture,
-          transparent: true
-        })
-      );
-      graticuleLines = new THREE.LineSegments(
-        multiLineToSegmentGeometry(geoGraticule10() as GeoJSON.MultiLineString, projection),
-        new THREE.LineBasicMaterial({
-          color: 0x5d99b1,
-          transparent: true,
-          opacity: 0.18
-        })
-      );
-      borderLines = new THREE.LineSegments(
-        multiLineToSegmentGeometry(countryBorders, projection),
-        new THREE.LineBasicMaterial({
-          color: 0x9cd7ea,
-          transparent: true,
-          opacity: 0.42
-        })
-      );
-
-      scene.add(mapMesh);
-      scene.add(graticuleLines);
-      scene.add(borderLines);
-    });
-
-    const resize = () => {
-      const width = frame.clientWidth;
-      const height = frame.clientHeight;
-      renderer.setSize(width, height, false);
-      updateCameraFrustum(camera, width, height);
-    };
-
-    const observer = new ResizeObserver(resize);
-    observer.observe(frame);
-    resize();
-
-    const handleWheel = (event: WheelEvent) => {
-      event.preventDefault();
-      camera.zoom = clamp(camera.zoom * Math.exp(-event.deltaY * 0.00135), 1, 18);
-      clampCamera(camera);
-      camera.updateProjectionMatrix();
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      keyboardState.add(event.code);
+      if (["KeyW", "KeyA", "KeyS", "KeyD"].includes(event.code)) {
+        activeKeysRef.current.add(event.code);
+        event.preventDefault();
+      }
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
-      keyboardState.delete(event.code);
+      activeKeysRef.current.delete(event.code);
     };
 
-    const handlePointerDown = (event: PointerEvent) => {
-      dragRef.current.active = true;
-      dragRef.current.moved = false;
-      dragRef.current.pointerX = event.clientX;
-      dragRef.current.pointerY = event.clientY;
-      frame.setPointerCapture(event.pointerId);
+    map.on("load", () => {
+      readyRef.current = true;
+      addMapLayers(map);
+      getSource(map, FLIGHTS_SOURCE_ID)?.setData(buildFlightFeatureCollection(flightsRef.current));
+      getSource(map, SELECTED_SOURCE_ID)?.setData(buildSelectedFeatureCollection(selectedFlightRef.current));
+      getSource(map, AIRPORT_SOURCE_ID)?.setData(buildAirportFeatureCollection(selectedDetailRef.current));
+
+      const initialTrail = selectedDetailRef.current ? buildTrailCoordinates(selectedDetailRef.current) : [];
+      const initialProjection = selectedDetailRef.current ? buildPredictionCoordinates(selectedDetailRef.current) : [];
+      routeCoordinatesRef.current = initialTrail.length > 1 ? initialTrail : initialProjection;
+      getSource(map, TRAIL_SOURCE_ID)?.setData(buildLineCollection(initialTrail));
+      getSource(map, PROJECTION_SOURCE_ID)?.setData(buildLineCollection(initialProjection));
+      getSource(map, CURSOR_SOURCE_ID)?.setData(emptyFeatureCollection<GeoJSON.Point>());
+
+      map.on("mouseenter", "flight-points", () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+
+      map.on("mouseleave", "flight-points", () => {
+        map.getCanvas().style.cursor = "";
+      });
+
+      map.on("click", "flight-points", (event) => {
+        const id = event.features?.[0]?.properties?.id as string | undefined;
+
+        if (!id) {
+          return;
+        }
+
+        const flight = flightsRef.current.find((item) => item.id === id);
+
+        if (flight) {
+          onSelectFlight(flight);
+        }
+      });
+
+      if (activeCountryRef.current) {
+        const bounds = createCountryBounds(flightsRef.current);
+
+        if (bounds) {
+          map.fitBounds(bounds, {
+            padding: 80,
+            duration: 0,
+            maxZoom: 6.8
+          });
+          hasFocusedCountryRef.current = activeCountryRef.current;
+        }
+      }
+    });
+
+    let lastFrame = performance.now();
+
+    const tick = (now: number) => {
+      const liveMap = mapRef.current;
+
+      if (liveMap) {
+        const delta = now - lastFrame;
+        lastFrame = now;
+        const step = 0.35 * delta;
+        let panX = 0;
+        let panY = 0;
+
+        if (activeKeysRef.current.has("KeyW")) {
+          panY -= step;
+        }
+        if (activeKeysRef.current.has("KeyS")) {
+          panY += step;
+        }
+        if (activeKeysRef.current.has("KeyA")) {
+          panX -= step;
+        }
+        if (activeKeysRef.current.has("KeyD")) {
+          panX += step;
+        }
+
+        if (panX !== 0 || panY !== 0) {
+          liveMap.panBy([panX, panY], { animate: false });
+        }
+
+        if (readyRef.current && routeCoordinatesRef.current.length > 1) {
+          const progress = ((now / 1000) * 0.22) % 1;
+          const coordinate = interpolateCoordinate(routeCoordinatesRef.current, progress);
+          getSource(liveMap, CURSOR_SOURCE_ID)?.setData(buildCursorFeatureCollection(coordinate));
+        }
+      }
+
+      frameRef.current = window.requestAnimationFrame(tick);
     };
 
-    const handlePointerMove = (event: PointerEvent) => {
-      if (!dragRef.current.active) {
-        return;
-      }
-
-      const deltaX = event.clientX - dragRef.current.pointerX;
-      const deltaY = event.clientY - dragRef.current.pointerY;
-
-      if (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2) {
-        dragRef.current.moved = true;
-      }
-
-      const viewWidth = (camera.right - camera.left) / camera.zoom;
-      const viewHeight = (camera.top - camera.bottom) / camera.zoom;
-      camera.position.x -= (deltaX / frame.clientWidth) * viewWidth;
-      camera.position.y += (deltaY / frame.clientHeight) * viewHeight;
-      clampCamera(camera);
-      camera.updateProjectionMatrix();
-
-      dragRef.current.pointerX = event.clientX;
-      dragRef.current.pointerY = event.clientY;
-    };
-
-    const selectFromPointer = (event: PointerEvent) => {
-      const rect = frame.getBoundingClientRect();
-      const pointer = new THREE.Vector2(
-        ((event.clientX - rect.left) / rect.width) * 2 - 1,
-        -((event.clientY - rect.top) / rect.height) * 2 + 1
-      );
-
-      raycaster.params.Points = {
-        threshold: 12 / camera.zoom
-      };
-      raycaster.setFromCamera(pointer, camera);
-
-      const intersections = raycaster.intersectObject(flightPoints);
-      const matchIndex = intersections[0]?.index;
-
-      if (matchIndex === undefined) {
-        return;
-      }
-
-      const flight = sceneRef.current?.projectedFlights[matchIndex];
-      if (flight) {
-        onSelectFlight(flight);
-      }
-    };
-
-    const handlePointerUp = (event: PointerEvent) => {
-      if (!dragRef.current.active) {
-        return;
-      }
-
-      if (!dragRef.current.moved) {
-        selectFromPointer(event);
-      }
-
-      dragRef.current.active = false;
-      frame.releasePointerCapture(event.pointerId);
-    };
-
-    frame.addEventListener("wheel", handleWheel, { passive: false });
-    frame.addEventListener("pointerdown", handlePointerDown);
-    frame.addEventListener("pointermove", handlePointerMove);
-    frame.addEventListener("pointerup", handlePointerUp);
+    frameRef.current = window.requestAnimationFrame(tick);
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
 
-    const clock = new THREE.Clock();
-    let frameId = 0;
-
-    const animate = () => {
-      const delta = clock.getDelta();
-      const moveSpeed = 220 / camera.zoom;
-
-      if (keyboardState.has("KeyW")) {
-        camera.position.y += moveSpeed * delta;
-      }
-      if (keyboardState.has("KeyS")) {
-        camera.position.y -= moveSpeed * delta;
-      }
-      if (keyboardState.has("KeyA")) {
-        camera.position.x -= moveSpeed * delta;
-      }
-      if (keyboardState.has("KeyD")) {
-        camera.position.x += moveSpeed * delta;
-      }
-
-      clampCamera(camera);
-      camera.updateProjectionMatrix();
-
-      const markerScale = 1 / camera.zoom;
-      selectedMarker.scale.setScalar(markerScale);
-      originMarker.scale.setScalar(markerScale);
-      destinationMarker.scale.setScalar(markerScale);
-      routeCursor.scale.setScalar(markerScale);
-
-      if (bundle.routeAnimationPoints.length > 1) {
-        const progress = (clock.elapsedTime * 0.25) % 1;
-        const segment = progress * (bundle.routeAnimationPoints.length - 1);
-        const baseIndex = Math.floor(segment);
-        const nextIndex = Math.min(baseIndex + 1, bundle.routeAnimationPoints.length - 1);
-        const alpha = segment - baseIndex;
-        const from = bundle.routeAnimationPoints[baseIndex];
-        const to = bundle.routeAnimationPoints[nextIndex];
-
-        routeCursor.position.set(
-          THREE.MathUtils.lerp(from.x, to.x, alpha),
-          THREE.MathUtils.lerp(from.y, to.y, alpha),
-          4
-        );
-        routeCursor.visible = true;
-      } else {
-        routeCursor.visible = false;
-      }
-
-      renderer.render(scene, camera);
-      frameId = window.requestAnimationFrame(animate);
-    };
-
-    animate();
-
     return () => {
-      window.cancelAnimationFrame(frameId);
-      observer.disconnect();
-      frame.removeEventListener("wheel", handleWheel);
-      frame.removeEventListener("pointerdown", handlePointerDown);
-      frame.removeEventListener("pointermove", handlePointerMove);
-      frame.removeEventListener("pointerup", handlePointerUp);
+      if (frameRef.current !== null) {
+        window.cancelAnimationFrame(frameRef.current);
+      }
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
-      disposed = true;
-      flightGeometry.dispose();
-      flightMaterial.dispose();
-      mapMesh?.geometry.dispose();
-      (mapMesh?.material as THREE.Material | undefined)?.dispose();
-      borderLines?.geometry.dispose();
-      (borderLines?.material as THREE.Material | undefined)?.dispose();
-      graticuleLines?.geometry.dispose();
-      (graticuleLines?.material as THREE.Material | undefined)?.dispose();
-      trailLine.geometry.dispose();
-      (trailLine.material as THREE.Material).dispose();
-      projectionLine.geometry.dispose();
-      (projectionLine.material as THREE.Material).dispose();
-      mapTexture?.dispose();
-      renderer.dispose();
-      sceneRef.current = null;
+      map.remove();
+      mapRef.current = null;
+      readyRef.current = false;
     };
-  }, [onSelectFlight, projection]);
+  }, [onSelectFlight]);
 
   useEffect(() => {
-    const bundle = sceneRef.current;
+    const map = mapRef.current;
 
-    if (!bundle) {
+    if (!map || !readyRef.current) {
       return;
     }
 
-    const positions = new Float32Array(projectedFlights.length * 3);
-    const colors = new Float32Array(projectedFlights.length * 3);
-    const color = new THREE.Color();
-
-    projectedFlights.forEach((flight, index) => {
-      const offset = index * 3;
-      positions[offset] = flight.worldX;
-      positions[offset + 1] = flight.worldY;
-      positions[offset + 2] = 2;
-
-      color.set(toneColor(flight.tone));
-      colors[offset] = color.r;
-      colors[offset + 1] = color.g;
-      colors[offset + 2] = color.b;
-    });
-
-    bundle.flightGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    bundle.flightGeometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    bundle.flightGeometry.computeBoundingSphere();
-    bundle.projectedFlights = projectedFlights;
-  }, [projectedFlights]);
+    getSource(map, FLIGHTS_SOURCE_ID)?.setData(buildFlightFeatureCollection(flights));
+  }, [flights]);
 
   useEffect(() => {
-    const bundle = sceneRef.current;
+    const map = mapRef.current;
 
-    if (!bundle) {
+    if (!map || !readyRef.current) {
       return;
     }
 
-    if (!selectedFlight) {
-      bundle.selectedMarker.visible = false;
-      return;
-    }
-
-    const projected = projectedFlights.find((flight) => flight.id === selectedFlight.id);
-
-    if (!projected) {
-      bundle.selectedMarker.visible = false;
-      return;
-    }
-
-    bundle.selectedMarker.position.set(projected.worldX, projected.worldY, 5);
-    bundle.selectedMarker.visible = true;
-  }, [projectedFlights, selectedFlight]);
+    getSource(map, SELECTED_SOURCE_ID)?.setData(buildSelectedFeatureCollection(selectedFlight));
+  }, [selectedFlight]);
 
   useEffect(() => {
-    const bundle = sceneRef.current;
+    const map = mapRef.current;
 
-    if (!bundle) {
+    if (!map || !readyRef.current) {
       return;
     }
 
-    if (!selectedDetail) {
-      bundle.trailLine.visible = false;
-      bundle.projectionLine.visible = false;
-      bundle.originMarker.visible = false;
-      bundle.destinationMarker.visible = false;
-      bundle.routeCursor.visible = false;
-      bundle.routeAnimationPoints = [];
+    const trailCoordinates = selectedDetail ? buildTrailCoordinates(selectedDetail) : [];
+    const predictionCoordinates = selectedDetail ? buildPredictionCoordinates(selectedDetail) : [];
+
+    routeCoordinatesRef.current = trailCoordinates.length > 1 ? trailCoordinates : predictionCoordinates;
+    getSource(map, TRAIL_SOURCE_ID)?.setData(buildLineCollection(trailCoordinates));
+    getSource(map, PROJECTION_SOURCE_ID)?.setData(buildLineCollection(predictionCoordinates));
+    getSource(map, AIRPORT_SOURCE_ID)?.setData(buildAirportFeatureCollection(selectedDetail));
+
+    if (routeCoordinatesRef.current.length < 2) {
+      getSource(map, CURSOR_SOURCE_ID)?.setData(emptyFeatureCollection<GeoJSON.Point>());
+    }
+  }, [selectedDetail]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+
+    if (!map || !readyRef.current) {
       return;
     }
 
-    const trailPoints = buildTrailWorldPoints(selectedDetail, projection).map(
-      (point) => new THREE.Vector3(point.x, point.y, 3)
-    );
-    const predictionPoints = buildPredictionWorldPoints(selectedDetail, projection).map(
-      (point) => new THREE.Vector3(point.x, point.y, 2.5)
-    );
+    if (!activeCountry) {
+      if (hasFocusedCountryRef.current !== null) {
+        map.easeTo({
+          center: [12, 20],
+          zoom: 1.35,
+          duration: 800
+        });
+      }
 
-    if (trailPoints.length > 1) {
-      updateLine(bundle.trailLine, trailPoints);
-      bundle.trailLine.visible = true;
-    } else {
-      bundle.trailLine.visible = false;
+      hasFocusedCountryRef.current = null;
+      return;
     }
 
-    if (predictionPoints.length > 1) {
-      updateLine(bundle.projectionLine, predictionPoints, true);
-      bundle.projectionLine.visible = true;
-    } else {
-      bundle.projectionLine.visible = false;
+    if (hasFocusedCountryRef.current === activeCountry) {
+      return;
     }
 
-    const animatedPoints = trailPoints.length > 1 ? trailPoints : predictionPoints;
-    bundle.routeAnimationPoints = animatedPoints;
+    const bounds = createCountryBounds(flights);
 
-    const origin = projectAirport(projection, selectedDetail.origin.longitude, selectedDetail.origin.latitude);
-    const destination = projectAirport(projection, selectedDetail.destination.longitude, selectedDetail.destination.latitude);
-
-    if (origin) {
-      bundle.originMarker.position.set(origin.x, origin.y, 4);
-      bundle.originMarker.visible = true;
-    } else {
-      bundle.originMarker.visible = false;
+    if (bounds) {
+      map.fitBounds(bounds, {
+        padding: 80,
+        duration: 900,
+        maxZoom: 6.8
+      });
+      hasFocusedCountryRef.current = activeCountry;
     }
-
-    if (destination) {
-      bundle.destinationMarker.position.set(destination.x, destination.y, 4);
-      bundle.destinationMarker.visible = true;
-    } else {
-      bundle.destinationMarker.visible = false;
-    }
-  }, [projection, selectedDetail]);
+  }, [activeCountry, flights]);
 
   return (
     <section className="map-shell">
       <header className="map-header">
         <div>
           <p className="eyebrow">World Airspace</p>
-          <h2>WebGL tactical flight surface</h2>
+          <h2>MapLibre vector airspace</h2>
         </div>
         <div className="map-actions">
           <span className={refreshing ? "chip chip-live is-refreshing" : "chip chip-live"}>
             {refreshing ? "Refreshing feed" : "Live feed stable"}
           </span>
-          <span className="chip">Wheel zoom / WASD pan</span>
+          <span className="chip">Vector map / city zoom</span>
         </div>
       </header>
 
-      <div ref={frameRef} className="map-frame map-frame-webgl">
-        <canvas ref={canvasRef} className="map-canvas" aria-label="Global live flight map" />
+      <div className="map-frame map-frame-maplibre">
+        <div ref={containerRef} className="maplibre-host" aria-label="Global live flight map" />
 
         <div className="map-overlay overlay-top-left">
           <span className="overlay-label">Live density</span>
-          <strong>{projectedFlights.length.toLocaleString()} tracks</strong>
+          <strong>{flights.length.toLocaleString()} tracks</strong>
         </div>
         <div className="map-overlay overlay-top-right">
           <span className="overlay-label">Controls</span>

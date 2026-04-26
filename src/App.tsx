@@ -1,11 +1,11 @@
-import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { FlightMap } from "./components/FlightMap";
+import { lazy, Suspense, startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { GlobeBackdrop } from "./components/GlobeBackdrop";
 import { fetchFlightDetail, fetchFlightFeed } from "./data/flightService";
 import type { FlightDetail, FlightSearchResult, FlightSummary } from "./types/flight";
 
 const REFRESH_MS = 60_000;
 const GLOBAL_RENDER_DIVISOR = 4;
+const FlightMap = lazy(async () => ({ default: (await import("./components/FlightMap")).FlightMap }));
 
 function formatTimestamp(timestamp?: number | null): string {
   if (!timestamp) {
@@ -355,13 +355,16 @@ export default function App() {
           </aside>
 
           <section className="center-column">
-            <FlightMap
-              flights={renderedFlights}
-              selectedFlight={selectedFlight}
-              selectedDetail={selectedDetail}
-              onSelectFlight={setSelectedFlight}
-              refreshing={refreshing}
-            />
+            <Suspense fallback={<section className="panel map-shell map-loading-shell">Loading vector map…</section>}>
+              <FlightMap
+                flights={renderedFlights}
+                selectedFlight={selectedFlight}
+                selectedDetail={selectedDetail}
+                onSelectFlight={setSelectedFlight}
+                refreshing={refreshing}
+                activeCountry={activeCountry}
+              />
+            </Suspense>
 
             <section className="panel lower-strip">
               <div className="section-head">

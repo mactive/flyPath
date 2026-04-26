@@ -1,36 +1,16 @@
 import { geoInterpolate } from "d3-geo";
-import type { GeoProjection } from "d3-geo";
 import type { FlightDetail, FlightRoutePoint } from "../types/flight";
 
-export const MAP_WIDTH = 1320;
-export const MAP_HEIGHT = 720;
+export type LngLatTuple = [number, number];
 
-export interface WorldPoint {
-  x: number;
-  y: number;
-}
-
-export function projectToWorld(projection: GeoProjection, longitude: number, latitude: number): WorldPoint | null {
-  const projected = projection([longitude, latitude]);
-
-  if (!projected) {
-    return null;
-  }
-
-  return {
-    x: projected[0] - MAP_WIDTH / 2,
-    y: MAP_HEIGHT / 2 - projected[1]
-  };
-}
-
-export function buildTrailWorldPoints(detail: FlightDetail, projection: GeoProjection): WorldPoint[] {
+export function buildTrailCoordinates(detail: FlightDetail): LngLatTuple[] {
   return detail.trail
-    .map((point) => projectToWorld(projection, point.lng, point.lat))
-    .filter((point): point is WorldPoint => point !== null)
+    .map((point) => [point.lng, point.lat] as LngLatTuple)
+    .filter(([lng, lat]) => Number.isFinite(lng) && Number.isFinite(lat))
     .reverse();
 }
 
-export function buildPredictionWorldPoints(detail: FlightDetail, projection: GeoProjection): WorldPoint[] {
+export function buildPredictionCoordinates(detail: FlightDetail): LngLatTuple[] {
   const startPoint = detail.trail[0] ?? {
     lat: detail.origin.latitude,
     lng: detail.origin.longitude
@@ -47,14 +27,6 @@ export function buildPredictionWorldPoints(detail: FlightDetail, projection: Geo
   });
 
   return points
-    .map((point) => projectToWorld(projection, point.lng, point.lat))
-    .filter((point): point is WorldPoint => point !== null);
-}
-
-export function projectAirport(
-  projection: GeoProjection,
-  longitude: number,
-  latitude: number
-): WorldPoint | null {
-  return projectToWorld(projection, longitude, latitude);
+    .map((point) => [point.lng, point.lat] as LngLatTuple)
+    .filter(([lng, lat]) => Number.isFinite(lng) && Number.isFinite(lat));
 }
