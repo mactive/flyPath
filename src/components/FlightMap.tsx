@@ -1,6 +1,6 @@
 import { geoGraticule10, geoNaturalEarth1, geoPath, type GeoProjection } from "d3-geo";
 import { feature, mesh } from "topojson-client";
-import worldAtlas from "world-atlas/countries-110m.json";
+import worldAtlasUrl from "world-atlas/countries-50m.json?url";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import {
@@ -13,21 +13,11 @@ import {
 } from "../utils/geo";
 import type { FlightDetail, FlightSummary } from "../types/flight";
 
-const atlas = worldAtlas as unknown as {
+interface AtlasTopology {
   objects: {
     countries: object;
   };
-};
-
-const countriesData = feature(
-  atlas as never,
-  atlas.objects.countries as never
-) as unknown as GeoJSON.FeatureCollection;
-const countryBorders = mesh(
-  atlas as never,
-  atlas.objects.countries as never,
-  (left: { id?: string | number }, right: { id?: string | number }) => left.id !== right.id
-) as unknown as GeoJSON.MultiLineString;
+}
 
 interface FlightMapProps {
   flights: FlightSummary[];
@@ -109,7 +99,10 @@ function createDotTexture(): THREE.CanvasTexture {
   return new THREE.CanvasTexture(canvas);
 }
 
-function createMapTexture(projection: GeoProjection): THREE.CanvasTexture {
+function createMapTexture(
+  projection: GeoProjection,
+  countriesData: GeoJSON.FeatureCollection
+): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = MAP_WIDTH * 2;
   canvas.height = MAP_HEIGHT * 2;
@@ -126,26 +119,52 @@ function createMapTexture(projection: GeoProjection): THREE.CanvasTexture {
   const path = geoPath(projection, context);
 
   context.beginPath();
-  path(geoGraticule10());
-  context.strokeStyle = "rgba(129, 213, 250, 0.07)";
-  context.lineWidth = 1;
-  context.stroke();
-
-  context.beginPath();
   path(countriesData);
   context.fillStyle = "rgba(180, 198, 214, 0.10)";
   context.fill();
-
-  context.beginPath();
-  path(countryBorders);
-  context.strokeStyle = "rgba(129, 213, 250, 0.18)";
-  context.lineWidth = 1.15;
-  context.stroke();
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.needsUpdate = true;
   return texture;
+}
+
+async function loadAtlasData() {
+  const atlas = (await fetch(worldAtlasUrl).then((response) => response.json())) as AtlasTopology;
+
+  const countriesData = feature(
+    atlas as never,
+    atlas.objects.countries as never
+  ) as unknown as GeoJSON.FeatureCollection;
+  const countryBorders = mesh(
+    atlas as never,
+    atlas.objects.countries as never,
+    (left: { id?: string | number }, right: { id?: string | number }) => left.id !== right.id
+  ) as unknown as GeoJSON.MultiLineString;
+
+  return { countriesData, countryBorders };
+}
+
+function multiLineToSegmentGeometry(geometry: GeoJSON.MultiLineString, projection: GeoProjection): THREE.BufferGeometry {
+  const vertices: number[] = [];
+
+  geometry.coordinates.forEach((line) => {
+    for (let index = 1; index < line.length; index += 1) {
+      const start = projectToWorld(projection, line[index - 1][0], line[index - 1][1]);
+      const end = projectToWorld(projection, line[index][0], line[index][1]);
+
+      if (!start || !end) {
+        continue;
+      }
+
+      vertices.push(start.x, start.y, 1.2, end.x, end.y, 1.2);
+    }
+  });
+
+  const buffer = new Float32Array(vertices);
+  const lineGeometry = new THREE.BufferGeometry();
+  lineGeometry.setAttribute("position", new THREE.BufferAttribute(buffer, 3));
+  return lineGeometry;
 }
 
 function createMarker(color: number): THREE.Group {
@@ -287,16 +306,6 @@ export function FlightMap({
     camera.position.set(0, 0, 500);
     camera.zoom = 1.08;
 
-    const mapTexture = createMapTexture(projection);
-    const mapMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(MAP_WIDTH, MAP_HEIGHT),
-      new THREE.MeshBasicMaterial({
-        map: mapTexture,
-        transparent: true
-      })
-    );
-    scene.add(mapMesh);
-
     const flightGeometry = new THREE.BufferGeometry();
     const flightMaterial = new THREE.PointsMaterial({
       size: 8.5,
@@ -372,6 +381,47 @@ export function FlightMap({
     };
 
     sceneRef.current = bundle;
+
+    let mapTexture: THREE.CanvasTexture | null = null;
+    let mapMesh: THREE.Mesh | null = null;
+    let graticuleLines: THREE.LineSegments | null = null;
+    let borderLines: THREE.LineSegments | null = null;
+    let disposed = false;
+
+    void loadAtlasData().then(({ countriesData, countryBorders }) => {
+      if (disposed) {
+        return;
+      }
+
+      mapTexture = createMapTexture(projection, countriesData);
+      mapMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(MAP_WIDTH, MAP_HEIGHT),
+        new THREE.MeshBasicMaterial({
+          map: mapTexture,
+          transparent: true
+        })
+      );
+      graticuleLines = new THREE.LineSegments(
+        multiLineToSegmentGeometry(geoGraticule10() as GeoJSON.MultiLineString, projection),
+        new THREE.LineBasicMaterial({
+          color: 0x5d99b1,
+          transparent: true,
+          opacity: 0.18
+        })
+      );
+      borderLines = new THREE.LineSegments(
+        multiLineToSegmentGeometry(countryBorders, projection),
+        new THREE.LineBasicMaterial({
+          color: 0x9cd7ea,
+          transparent: true,
+          opacity: 0.42
+        })
+      );
+
+      scene.add(mapMesh);
+      scene.add(graticuleLines);
+      scene.add(borderLines);
+    });
 
     const resize = () => {
       const width = frame.clientWidth;
@@ -538,9 +588,20 @@ export function FlightMap({
       frame.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
+      disposed = true;
       flightGeometry.dispose();
       flightMaterial.dispose();
-      mapTexture.dispose();
+      mapMesh?.geometry.dispose();
+      (mapMesh?.material as THREE.Material | undefined)?.dispose();
+      borderLines?.geometry.dispose();
+      (borderLines?.material as THREE.Material | undefined)?.dispose();
+      graticuleLines?.geometry.dispose();
+      (graticuleLines?.material as THREE.Material | undefined)?.dispose();
+      trailLine.geometry.dispose();
+      (trailLine.material as THREE.Material).dispose();
+      projectionLine.geometry.dispose();
+      (projectionLine.material as THREE.Material).dispose();
+      mapTexture?.dispose();
       renderer.dispose();
       sceneRef.current = null;
     };

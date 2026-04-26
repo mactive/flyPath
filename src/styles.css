@@ -313,6 +313,13 @@ input {
   gap: 8px;
 }
 
+.country-filter-grid {
+  display: grid;
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+}
+
 .list-row,
 .flight-list-item,
 .timeline-row,
@@ -341,6 +348,33 @@ input {
   text-align: left;
   color: var(--text);
   cursor: pointer;
+}
+
+.country-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.022);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.country-chip span,
+.country-chip strong {
+  font-family: var(--mono);
+}
+
+.country-chip span {
+  color: var(--muted);
+}
+
+.country-chip.is-active {
+  border-color: var(--line-strong);
+  background: rgba(94, 244, 205, 0.08);
 }
 
 .flight-list-item strong,

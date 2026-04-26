@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { STATES_ALL_CACHE_KEY } from "./cacheKeys.js";
 import { memoryCache } from "./cache.js";
 import { provider } from "./provider.js";
 
@@ -21,7 +22,7 @@ app.get("/api/health", (c) => {
 });
 
 app.get("/api/states/all", async (c) => {
-  const payload = await memoryCache.remember("states:all", 15_000, () => provider.fetchStatesAll());
+  const payload = await memoryCache.remember(STATES_ALL_CACHE_KEY, 75_000, () => provider.fetchStatesAll());
   c.header("Cache-Control", "public, max-age=15, stale-while-revalidate=45");
   return c.json(payload);
 });

@@ -5,6 +5,7 @@ import { fetchFlightDetail, fetchFlightFeed } from "./data/flightService";
 import type { FlightDetail, FlightSearchResult, FlightSummary } from "./types/flight";
 
 const REFRESH_MS = 60_000;
+const GLOBAL_RENDER_DIVISOR = 4;
 
 function formatTimestamp(timestamp?: number | null): string {
   if (!timestamp) {
@@ -47,6 +48,16 @@ function formatCompactNumber(value: number): string {
   }).format(value);
 }
 
+function hashFlightId(value: string): number {
+  let hash = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+
+  return hash;
+}
+
 function summarizeDensity(flights: FlightSummary[]) {
   return flights.reduce(
     (accumulator, flight) => {
@@ -73,6 +84,7 @@ export default function App() {
   const [feedError, setFeedError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(true);
   const [query, setQuery] = useState("");
+  const [activeCountry, setActiveCountry] = useState<string | null>(null);
   const [selectedFlight, setSelectedFlight] = useState<FlightSummary | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<FlightDetail | null>(null);
   const [detailMatches, setDetailMatches] = useState<FlightSearchResult[]>([]);
@@ -169,38 +181,59 @@ export default function App() {
     };
   }, [selectedFlight]);
 
-  const visibleFlights = useMemo(() => {
+  const filteredFlights = useMemo(() => {
     const normalizedQuery = deferredQuery.trim().toLowerCase();
 
-    if (!normalizedQuery) {
-      return flights;
-    }
-
     return flights.filter((flight) => {
-      return (
+      const matchesCountry = activeCountry ? flight.country === activeCountry : true;
+      const matchesQuery =
+        !normalizedQuery ||
         flight.callsign.toLowerCase().includes(normalizedQuery) ||
         flight.country.toLowerCase().includes(normalizedQuery) ||
         flight.id.toLowerCase().includes(normalizedQuery) ||
-        (flight.squawk ?? "").toLowerCase().includes(normalizedQuery)
-      );
+        (flight.squawk ?? "").toLowerCase().includes(normalizedQuery);
+
+      return matchesCountry && matchesQuery;
     });
-  }, [deferredQuery, flights]);
+  }, [activeCountry, deferredQuery, flights]);
+
+  const renderedFlights = useMemo(() => {
+    if (activeCountry) {
+      return filteredFlights;
+    }
+
+    return filteredFlights.filter((flight) => hashFlightId(flight.id) % GLOBAL_RENDER_DIVISOR === 0);
+  }, [activeCountry, filteredFlights]);
 
   const density = useMemo(() => summarizeDensity(flights), [flights]);
   const topCountries = useMemo(
     () =>
       Array.from(density.countries.entries())
-        .sort((left, right) => right[1] - left[1])
-        .slice(0, 5),
+        .sort((left, right) => right[1] - left[1]),
     [density.countries]
   );
   const activeList = useMemo(
     () =>
-      [...visibleFlights]
+      [...filteredFlights]
         .sort((left, right) => right.groundSpeedKts - left.groundSpeedKts)
         .slice(0, 8),
-    [visibleFlights]
+    [filteredFlights]
   );
+
+  useEffect(() => {
+    if (!selectedFlight) {
+      return;
+    }
+
+    const stillVisible = filteredFlights.some((flight) => flight.id === selectedFlight.id);
+
+    if (!stillVisible) {
+      setSelectedFlight(null);
+      setSelectedDetail(null);
+      setDetailMatches([]);
+      setDetailError(null);
+    }
+  }, [filteredFlights, selectedFlight]);
 
   return (
     <div className="app-shell">
@@ -239,7 +272,9 @@ export default function App() {
                 <p className="eyebrow">Flight index</p>
                 <h2>Search & pressure</h2>
               </div>
-              <span className="badge">{formatFlightCount(visibleFlights.length)} visible</span>
+              <span className="badge">
+                {formatFlightCount(renderedFlights.length)} rendered / {formatFlightCount(filteredFlights.length)} matched
+              </span>
             </div>
 
             <label className="search-box">
@@ -269,14 +304,27 @@ export default function App() {
 
             <section className="rail-group">
               <div className="section-head compact">
-                <h3>Top countries</h3>
+                <h3>Countries</h3>
               </div>
-              <div className="list-grid">
+              <div className="country-filter-grid">
+                <button
+                  type="button"
+                  className={`country-chip ${activeCountry === null ? "is-active" : ""}`}
+                  onClick={() => setActiveCountry(null)}
+                >
+                  <span>World</span>
+                  <strong>{formatFlightCount(flights.length)}</strong>
+                </button>
                 {topCountries.map(([country, count]) => (
-                  <div key={country} className="list-row">
+                  <button
+                    key={country}
+                    type="button"
+                    className={`country-chip ${activeCountry === country ? "is-active" : ""}`}
+                    onClick={() => setActiveCountry(country)}
+                  >
                     <span>{country}</span>
                     <strong>{count}</strong>
-                  </div>
+                  </button>
                 ))}
               </div>
             </section>
@@ -308,7 +356,7 @@ export default function App() {
 
           <section className="center-column">
             <FlightMap
-              flights={visibleFlights}
+              flights={renderedFlights}
               selectedFlight={selectedFlight}
               selectedDetail={selectedDetail}
               onSelectFlight={setSelectedFlight}
@@ -326,17 +374,17 @@ export default function App() {
                 <article className="stat-panel">
                   <span>Coverage</span>
                   <strong>Global</strong>
-                  <p>OpenSky state feed with FR24-derived detail enrichment on demand.</p>
+                  <p>Natural Earth country geometry with OpenSky feed and FR24-derived detail enrichment.</p>
                 </article>
                 <article className="stat-panel">
                   <span>Cadence</span>
                   <strong>60s</strong>
-                  <p>Whole-map refresh cycle with per-flight detail retrieval only after selection.</p>
+                  <p>Whole-map refresh cycle, with country drill-in rendering and on-demand detail cache.</p>
                 </article>
                 <article className="stat-panel">
                   <span>Interaction</span>
                   <strong>Route focus</strong>
-                  <p>Click a flight to reveal trail history, destination projection, and airport pair.</p>
+                  <p>Wheel zoom, drag or WASD pan, then click a flight to reveal its trail and route pair.</p>
                 </article>
               </div>
             </section>

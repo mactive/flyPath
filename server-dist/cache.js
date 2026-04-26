@@ -1,5 +1,11 @@
 export class MemoryCache {
     store = new Map();
+    put(key, value, ttlMs) {
+        this.store.set(key, {
+            value,
+            expiresAt: Date.now() + ttlMs
+        });
+    }
     async remember(key, ttlMs, loader) {
         const now = Date.now();
         const cached = this.store.get(key);
