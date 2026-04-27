@@ -8,6 +8,7 @@ import type { FlightDetail, FlightSummary } from "../types/flight";
 const DEFAULT_STYLE_URL = import.meta.env.VITE_MAP_STYLE_URL ?? "https://demotiles.maplibre.org/style.json";
 const FLIGHTS_SOURCE_ID = "flights";
 const SELECTED_SOURCE_ID = "selected-flight";
+const HOVER_SOURCE_ID = "hover-flight";
 const TRAIL_SOURCE_ID = "flight-trail";
 const PROJECTION_SOURCE_ID = "flight-projection";
 const AIRPORT_SOURCE_ID = "flight-airports";
@@ -72,6 +73,28 @@ function buildFlightFeatureCollection(flights: FlightSummary[]): GeoJSON.Feature
 }
 
 function buildSelectedFeatureCollection(flight: FlightSummary | null): GeoJSON.FeatureCollection<GeoJSON.Point> {
+  if (!flight) {
+    return emptyFeatureCollection<GeoJSON.Point>();
+  }
+
+  return {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: [flight.longitude, flight.latitude]
+        },
+        properties: {
+          id: flight.id
+        }
+      }
+    ]
+  };
+}
+
+function buildHoverFeatureCollection(flight: FlightSummary | null): GeoJSON.FeatureCollection<GeoJSON.Point> {
   if (!flight) {
     return emptyFeatureCollection<GeoJSON.Point>();
   }
@@ -214,6 +237,10 @@ function addMapLayers(map: MapLibreMap) {
     type: "geojson",
     data: emptyFeatureCollection<GeoJSON.Point>()
   });
+  map.addSource(HOVER_SOURCE_ID, {
+    type: "geojson",
+    data: emptyFeatureCollection<GeoJSON.Point>()
+  });
   map.addSource(TRAIL_SOURCE_ID, {
     type: "geojson",
     data: emptyFeatureCollection<GeoJSON.LineString>()
@@ -236,7 +263,7 @@ function addMapLayers(map: MapLibreMap) {
     type: "line",
     source: PROJECTION_SOURCE_ID,
     paint: {
-      "line-color": "#81d5fa",
+      "line-color": "#161a1f",
       "line-width": ["interpolate", ["linear"], ["zoom"], 2, 1.2, 6, 2.2, 10, 3.4],
       "line-opacity": 0.72,
       "line-dasharray": [3, 2]
@@ -248,9 +275,9 @@ function addMapLayers(map: MapLibreMap) {
     type: "line",
     source: TRAIL_SOURCE_ID,
     paint: {
-      "line-color": "#5ef4cd",
+      "line-color": "#06080a",
       "line-width": ["interpolate", ["linear"], ["zoom"], 2, 1.6, 6, 2.8, 10, 4.2],
-      "line-opacity": 0.86
+      "line-opacity": 0.92
     }
   });
 
@@ -274,8 +301,49 @@ function addMapLayers(map: MapLibreMap) {
       ],
       "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 1.8, 4, 2.6, 7, 4.2, 10, 6.4],
       "circle-opacity": 0.92,
-      "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 5, 0.3, 10, 1.1],
-      "circle-stroke-color": "rgba(255,255,255,0.22)"
+      "circle-stroke-width": 1,
+      "circle-stroke-color": "rgba(118, 126, 136, 0.88)",
+      "circle-stroke-opacity": 0.92
+    }
+  });
+
+  map.addLayer({
+    id: "hover-flight-glow",
+    type: "circle",
+    source: HOVER_SOURCE_ID,
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 8, 4, 10, 7, 14, 10, 18],
+      "circle-color": "rgba(255,255,255,0.14)",
+      "circle-stroke-width": 1,
+      "circle-stroke-color": "rgba(255,255,255,0.82)",
+      "circle-radius-transition": {
+        duration: 160,
+        delay: 0
+      },
+      "circle-opacity-transition": {
+        duration: 160,
+        delay: 0
+      }
+    }
+  });
+
+  map.addLayer({
+    id: "hover-flight-core",
+    type: "circle",
+    source: HOVER_SOURCE_ID,
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 3.6, 4, 5.2, 7, 8.4, 10, 12.8],
+      "circle-color": "#ffffff",
+      "circle-stroke-width": 1,
+      "circle-stroke-color": "rgba(118, 126, 136, 0.92)",
+      "circle-radius-transition": {
+        duration: 160,
+        delay: 0
+      },
+      "circle-opacity-transition": {
+        duration: 160,
+        delay: 0
+      }
     }
   });
 
@@ -363,6 +431,7 @@ export function FlightMap({
   const routeCoordinatesRef = useRef<LngLatTuple[]>([]);
   const frameRef = useRef<number | null>(null);
   const hasFocusedCountryRef = useRef<string | null>(null);
+  const popupRef = useRef<maplibregl.Popup | null>(null);
 
   useEffect(() => {
     flightsRef.current = flights;
@@ -400,6 +469,12 @@ export function FlightMap({
     });
 
     mapRef.current = map;
+    popupRef.current = new maplibregl.Popup({
+      closeButton: false,
+      closeOnClick: false,
+      offset: 12,
+      className: "flight-tooltip-popup"
+    });
 
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -423,6 +498,7 @@ export function FlightMap({
       addMapLayers(map);
       getSource(map, FLIGHTS_SOURCE_ID)?.setData(buildFlightFeatureCollection(flightsRef.current));
       getSource(map, SELECTED_SOURCE_ID)?.setData(buildSelectedFeatureCollection(selectedFlightRef.current));
+      getSource(map, HOVER_SOURCE_ID)?.setData(emptyFeatureCollection<GeoJSON.Point>());
       getSource(map, AIRPORT_SOURCE_ID)?.setData(buildAirportFeatureCollection(selectedDetailRef.current));
 
       const initialTrail = selectedDetailRef.current ? buildTrailCoordinates(selectedDetailRef.current) : [];
@@ -436,8 +512,36 @@ export function FlightMap({
         map.getCanvas().style.cursor = "pointer";
       });
 
+      map.on("mousemove", "flight-points", (event) => {
+        const id = event.features?.[0]?.properties?.id as string | undefined;
+
+        if (!id) {
+          getSource(map, HOVER_SOURCE_ID)?.setData(emptyFeatureCollection<GeoJSON.Point>());
+          popupRef.current?.remove();
+          return;
+        }
+
+        const flight = flightsRef.current.find((item) => item.id === id) ?? null;
+        getSource(map, HOVER_SOURCE_ID)?.setData(buildHoverFeatureCollection(flight));
+
+        if (flight) {
+          popupRef.current
+            ?.setLngLat([flight.longitude, flight.latitude])
+            .setHTML(
+              `<div class="flight-tooltip">
+                <strong>${flight.callsign}</strong>
+                <span>${flight.altitudeFt.toLocaleString()} ft</span>
+                <span>${flight.groundSpeedKts} kts</span>
+              </div>`
+            )
+            .addTo(map);
+        }
+      });
+
       map.on("mouseleave", "flight-points", () => {
         map.getCanvas().style.cursor = "";
+        getSource(map, HOVER_SOURCE_ID)?.setData(emptyFeatureCollection<GeoJSON.Point>());
+        popupRef.current?.remove();
       });
 
       map.on("click", "flight-points", (event) => {
@@ -517,6 +621,8 @@ export function FlightMap({
       }
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
+      popupRef.current?.remove();
+      popupRef.current = null;
       map.remove();
       mapRef.current = null;
       readyRef.current = false;

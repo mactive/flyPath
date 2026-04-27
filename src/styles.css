@@ -480,6 +480,36 @@ input {
   transform-origin: bottom right;
 }
 
+.flight-tooltip-popup .maplibregl-popup-content {
+  padding: 0;
+  background: rgba(5, 10, 15, 0.94);
+  border: 1px solid rgba(118, 126, 136, 0.9);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+}
+
+.flight-tooltip-popup .maplibregl-popup-tip {
+  border-top-color: rgba(5, 10, 15, 0.94);
+}
+
+.flight-tooltip {
+  display: grid;
+  gap: 6px;
+  min-width: 132px;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--text);
+}
+
+.flight-tooltip strong {
+  font-size: 0.84rem;
+  color: #ffffff;
+}
+
+.flight-tooltip span {
+  color: var(--muted);
+}
+
 .map-overlay {
   position: absolute;
   padding: 10px 12px;
