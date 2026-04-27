@@ -81,3 +81,48 @@ export interface FlightFeedSnapshot {
   flights: FlightSummary[];
   updatedAt: number;
 }
+
+export interface AirportBoardFlight {
+  flightId: string | null;
+  flightNumber: string;
+  callsign: string | null;
+  airlineName: string;
+  statusText: string;
+  statusTone: "live" | "scheduled" | "delayed" | "canceled" | "other";
+  scheduledDeparture: number | null;
+  estimatedDeparture: number | null;
+  terminal: string | null;
+  gate: string | null;
+  destination: {
+    iata: string;
+    icao: string;
+    name: string;
+    city?: string;
+    country?: string;
+  };
+}
+
+export interface AirportBoard {
+  airport: {
+    iata: string;
+    icao: string;
+    name: string;
+    city?: string;
+    country?: string;
+    timezone?: string;
+    latitude: number;
+    longitude: number;
+  };
+  timestamp: number | null;
+  departuresVisible: number;
+  departuresTotal: number;
+  delayIndex: number | null;
+  delayedShare: number | null;
+  canceledShare: number | null;
+  flights: AirportBoardFlight[];
+}
+
+export interface AirportBoardsSnapshot {
+  boards: AirportBoard[];
+  updatedAt: number;
+}

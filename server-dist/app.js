@@ -42,6 +42,11 @@ app.get("/api/fr24/detail", async (c) => {
     c.header("Cache-Control", "public, max-age=30, stale-while-revalidate=90");
     return c.json(payload);
 });
+app.get("/api/boards/top-airports", async (c) => {
+    const payload = await memoryCache.remember("boards:top-airports", 4 * 60_000, () => provider.fetchTopAirportBoards());
+    c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=240");
+    return c.json(payload);
+});
 app.onError((error, c) => {
     console.error(error);
     return c.json({

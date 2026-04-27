@@ -1,6 +1,7 @@
 export const KV_KEYS = {
   latestSnapshot: "snapshot:latest",
   latestSnapshotMeta: "snapshot:latest-meta",
+  topAirportBoards: "airport-boards:top",
   detail: (flightId: string, version: string) => `flight-detail:${flightId}:${version}`,
   search: (query: string, limit: number) => `flight-search:${query}:${limit}`
 };

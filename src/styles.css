@@ -189,6 +189,11 @@ input {
   padding: 18px;
 }
 
+.left-rail {
+  display: flex;
+  flex-direction: column;
+}
+
 .center-column {
   display: flex;
   flex-direction: column;
@@ -280,6 +285,11 @@ input {
 
 .kpi-stack {
   margin-top: 14px;
+}
+
+.left-rail .kpi-stack {
+  margin-top: auto;
+  padding-top: 18px;
 }
 
 .kpi-card,
@@ -578,10 +588,142 @@ input {
 
 .lower-strip {
   padding: 18px;
+  overflow: hidden;
 }
 
 .stats-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.airport-board-marquee {
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, transparent, black 5%, black 95%, transparent);
+}
+
+.airport-board-track {
+  display: flex;
+  gap: 14px;
+  width: max-content;
+  animation: board-scroll 78s linear infinite;
+}
+
+.airport-board-track:hover {
+  animation-play-state: paused;
+}
+
+.airport-board-card {
+  width: min(340px, calc(100vw - 90px));
+  padding: 14px;
+  border: 1px solid rgba(129, 213, 250, 0.12);
+  background:
+    linear-gradient(180deg, rgba(8, 16, 24, 0.96), rgba(5, 11, 17, 0.92)),
+    rgba(255, 255, 255, 0.02);
+}
+
+.airport-board-head,
+.airport-board-meta,
+.airport-board-row {
+  display: grid;
+  align-items: center;
+}
+
+.airport-board-head {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
+.airport-board-head strong,
+.airport-board-meta strong,
+.airport-board-row strong,
+.airport-board-row span,
+.airport-board-row em,
+.airport-board-stats span {
+  font-family: var(--mono);
+}
+
+.airport-board-head strong {
+  display: block;
+  font-size: 1.3rem;
+}
+
+.airport-board-head span,
+.airport-board-meta span,
+.airport-board-stats span,
+.airport-board-row span,
+.airport-board-row em {
+  color: var(--muted);
+}
+
+.airport-board-head > div:first-child span {
+  display: block;
+  margin-top: 4px;
+}
+
+.airport-board-stats {
+  display: grid;
+  gap: 6px;
+  text-align: right;
+  font-size: 0.68rem;
+}
+
+.airport-board-meta {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 10px 0 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 0.72rem;
+}
+
+.airport-board-table {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.airport-board-row {
+  grid-template-columns: 54px 66px 52px 42px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 0;
+  font-size: 0.7rem;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.05);
+}
+
+.airport-board-row:last-child {
+  border-bottom: 0;
+}
+
+.airport-board-row em {
+  font-style: normal;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.board-status.tone-live {
+  color: var(--accent);
+}
+
+.board-status.tone-scheduled {
+  color: var(--muted);
+}
+
+.board-status.tone-delayed {
+  color: var(--warn);
+}
+
+.board-status.tone-canceled {
+  color: var(--danger);
+}
+
+@keyframes board-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-50% - 7px));
+  }
 }
 
 .stat-panel span {
@@ -731,6 +873,10 @@ input {
   .stats-grid {
     grid-template-columns: 1fr;
   }
+
+  .airport-board-card {
+    width: min(320px, calc(100vw - 70px));
+  }
 }
 
 @media (max-width: 720px) {
@@ -759,6 +905,12 @@ input {
   .route-box {
     grid-template-columns: 1fr;
     justify-items: flex-start;
+  }
+
+  .airport-board-row {
+    grid-template-columns: 52px 62px 46px 36px minmax(0, 1fr);
+    gap: 8px;
+    font-size: 0.66rem;
   }
 
   .route-arrow {

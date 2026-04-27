@@ -19,6 +19,7 @@ let pmtilesRegistered = false;
 
 interface FlightMapProps {
   flights: FlightSummary[];
+  focusFlights: FlightSummary[];
   selectedFlight: FlightSummary | null;
   selectedDetail: FlightDetail | null;
   onSelectFlight: (flight: FlightSummary) => void;
@@ -414,6 +415,7 @@ function addMapLayers(map: MapLibreMap) {
 
 export function FlightMap({
   flights,
+  focusFlights,
   selectedFlight,
   selectedDetail,
   onSelectFlight,
@@ -423,6 +425,7 @@ export function FlightMap({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const flightsRef = useRef<FlightSummary[]>([]);
+  const focusFlightsRef = useRef<FlightSummary[]>([]);
   const selectedFlightRef = useRef<FlightSummary | null>(null);
   const selectedDetailRef = useRef<FlightDetail | null>(null);
   const activeCountryRef = useRef<string | null>(null);
@@ -436,6 +439,10 @@ export function FlightMap({
   useEffect(() => {
     flightsRef.current = flights;
   }, [flights]);
+
+  useEffect(() => {
+    focusFlightsRef.current = focusFlights;
+  }, [focusFlights]);
 
   useEffect(() => {
     selectedFlightRef.current = selectedFlight;
@@ -559,7 +566,7 @@ export function FlightMap({
       });
 
       if (activeCountryRef.current) {
-        const bounds = createCountryBounds(flightsRef.current);
+        const bounds = createCountryBounds(focusFlightsRef.current);
 
         if (bounds) {
           map.fitBounds(bounds, {
@@ -693,7 +700,7 @@ export function FlightMap({
       return;
     }
 
-    const bounds = createCountryBounds(flights);
+    const bounds = createCountryBounds(focusFlights);
 
     if (bounds) {
       map.fitBounds(bounds, {
@@ -703,7 +710,7 @@ export function FlightMap({
       });
       hasFocusedCountryRef.current = activeCountry;
     }
-  }, [activeCountry, flights]);
+  }, [activeCountry, focusFlights]);
 
   return (
     <section className="map-shell">

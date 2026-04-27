@@ -1,7 +1,7 @@
 import { lazy, Suspense, startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { GlobeBackdrop } from "./components/GlobeBackdrop";
-import { fetchFlightDetail, fetchFlightFeed } from "./data/flightService";
-import type { FlightDetail, FlightSearchResult, FlightSummary } from "./types/flight";
+import { fetchFlightDetail, fetchFlightFeed, fetchTopAirportBoards } from "./data/flightService";
+import type { AirportBoard, FlightDetail, FlightSearchResult, FlightSummary } from "./types/flight";
 
 const REFRESH_MS = 60_000;
 const GLOBAL_RENDER_DIVISOR = 4;
@@ -41,11 +41,48 @@ function formatFlightCount(value: number): string {
   return value.toLocaleString("en-US");
 }
 
+function formatBoardTime(timestamp?: number | null, timeZone?: string): string {
+  if (!timestamp) {
+    return "--:--";
+  }
+
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: timeZone || "UTC"
+    }).format(timestamp * 1000);
+  } catch {
+    return new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).format(timestamp * 1000);
+  }
+}
+
 function formatCompactNumber(value: number): string {
   return new Intl.NumberFormat("en-US", {
     notation: "compact",
     maximumFractionDigits: 1
   }).format(value);
+}
+
+function formatPercent(value?: number | null): string {
+  if (value === null || value === undefined) {
+    return "--";
+  }
+
+  return `${Math.round(value * 100)}%`;
+}
+
+function formatDelayIndex(value?: number | null): string {
+  if (value === null || value === undefined) {
+    return "--";
+  }
+
+  return `${value.toFixed(1)}x`;
 }
 
 function hashFlightId(value: string): number {
@@ -90,6 +127,10 @@ export default function App() {
   const [detailMatches, setDetailMatches] = useState<FlightSearchResult[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [airportBoards, setAirportBoards] = useState<AirportBoard[]>([]);
+  const [airportBoardsUpdatedAt, setAirportBoardsUpdatedAt] = useState<number | null>(null);
+  const [airportBoardsLoading, setAirportBoardsLoading] = useState(true);
+  const [airportBoardsError, setAirportBoardsError] = useState<string | null>(null);
 
   const deferredQuery = useDeferredValue(query);
 
@@ -126,6 +167,44 @@ export default function App() {
 
     void loadFeed();
     const interval = window.setInterval(loadFeed, REFRESH_MS);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadBoards = async () => {
+      try {
+        const snapshot = await fetchTopAirportBoards();
+
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setAirportBoards(snapshot.boards);
+          setAirportBoardsUpdatedAt(snapshot.updatedAt);
+          setAirportBoardsError(null);
+        });
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        setAirportBoardsError(error instanceof Error ? error.message : "Airport boards unavailable");
+      } finally {
+        if (active) {
+          setAirportBoardsLoading(false);
+        }
+      }
+    };
+
+    void loadBoards();
+    const interval = window.setInterval(loadBoards, REFRESH_MS);
 
     return () => {
       active = false;
@@ -219,6 +298,14 @@ export default function App() {
         .slice(0, 8),
     [filteredFlights]
   );
+  const countryFocusFlights = useMemo(
+    () => (activeCountry ? flights.filter((flight) => flight.country === activeCountry) : flights),
+    [activeCountry, flights]
+  );
+  const airportBoardTrack = useMemo(
+    () => (airportBoards.length > 0 ? [...airportBoards, ...airportBoards] : []),
+    [airportBoards]
+  );
 
   useEffect(() => {
     if (!selectedFlight) {
@@ -287,21 +374,6 @@ export default function App() {
               />
             </label>
 
-            <div className="kpi-stack">
-              <article className="kpi-card">
-                <span>Peak altitude</span>
-                <strong>{formatCompactNumber(density.maxAltitude)} ft</strong>
-              </article>
-              <article className="kpi-card">
-                <span>Fastest track</span>
-                <strong>{formatCompactNumber(density.fastest)} kts</strong>
-              </article>
-              <article className="kpi-card">
-                <span>Grounded share</span>
-                <strong>{flights.length ? Math.round((density.grounded / flights.length) * 100) : 0}%</strong>
-              </article>
-            </div>
-
             <section className="rail-group">
               <div className="section-head compact">
                 <h3>Countries</h3>
@@ -352,12 +424,28 @@ export default function App() {
                 ))}
               </div>
             </section>
+
+            <div className="kpi-stack rail-group">
+              <article className="kpi-card">
+                <span>Peak altitude</span>
+                <strong>{formatCompactNumber(density.maxAltitude)} ft</strong>
+              </article>
+              <article className="kpi-card">
+                <span>Fastest track</span>
+                <strong>{formatCompactNumber(density.fastest)} kts</strong>
+              </article>
+              <article className="kpi-card">
+                <span>Grounded share</span>
+                <strong>{flights.length ? Math.round((density.grounded / flights.length) * 100) : 0}%</strong>
+              </article>
+            </div>
           </aside>
 
           <section className="center-column">
             <Suspense fallback={<section className="panel map-shell map-loading-shell">Loading vector map…</section>}>
               <FlightMap
                 flights={renderedFlights}
+                focusFlights={countryFocusFlights}
                 selectedFlight={selectedFlight}
                 selectedDetail={selectedDetail}
                 onSelectFlight={setSelectedFlight}
@@ -370,26 +458,56 @@ export default function App() {
               <div className="section-head">
                 <div>
                   <p className="eyebrow">Live situation</p>
-                  <h2>Feed characteristics</h2>
+                  <h2>Top 20 airport departure boards</h2>
                 </div>
+                <span className="badge">{airportBoardsUpdatedAt ? formatTimestamp(airportBoardsUpdatedAt) : "loading"}</span>
               </div>
-              <div className="stats-grid">
-                <article className="stat-panel">
-                  <span>Coverage</span>
-                  <strong>Global</strong>
-                  <p>Natural Earth country geometry with OpenSky feed and FR24-derived detail enrichment.</p>
-                </article>
-                <article className="stat-panel">
-                  <span>Cadence</span>
-                  <strong>60s</strong>
-                  <p>Whole-map refresh cycle, with country drill-in rendering and on-demand detail cache.</p>
-                </article>
-                <article className="stat-panel">
-                  <span>Interaction</span>
-                  <strong>Route focus</strong>
-                  <p>Wheel zoom, drag or WASD pan, then click a flight to reveal its trail and route pair.</p>
-                </article>
-              </div>
+              {airportBoardsLoading && airportBoards.length === 0 && <div className="status-banner">Loading airport boards…</div>}
+              {airportBoardsError && <div className="status-banner error">{airportBoardsError}</div>}
+              {!airportBoardsLoading && airportBoards.length === 0 && !airportBoardsError && (
+                <div className="empty-state">No airport board data is available yet.</div>
+              )}
+              {airportBoardTrack.length > 0 && (
+                <div className="airport-board-marquee">
+                  <div className="airport-board-track">
+                    {airportBoardTrack.map((board, index) => (
+                      <article
+                        key={`${board.airport.iata}-${index}`}
+                        className="airport-board-card"
+                        aria-hidden={index >= airportBoards.length}
+                      >
+                        <div className="airport-board-head">
+                          <div>
+                            <strong>{board.airport.iata}</strong>
+                            <span>{board.airport.city || board.airport.name}</span>
+                          </div>
+                          <div className="airport-board-stats">
+                            <span>Delay {formatDelayIndex(board.delayIndex)}</span>
+                            <span>Late {formatPercent(board.delayedShare)}</span>
+                          </div>
+                        </div>
+
+                        <div className="airport-board-meta">
+                          <span>{board.airport.name}</span>
+                          <strong>{board.departuresVisible}/{board.departuresTotal} deps</strong>
+                        </div>
+
+                        <div className="airport-board-table">
+                          {board.flights.map((flight) => (
+                            <div key={`${board.airport.iata}-${flight.flightNumber}-${flight.scheduledDeparture ?? 0}`} className="airport-board-row">
+                              <span>{formatBoardTime(flight.estimatedDeparture ?? flight.scheduledDeparture, board.airport.timezone)}</span>
+                              <strong>{flight.flightNumber}</strong>
+                              <span>{flight.destination.iata}</span>
+                              <span>{flight.gate ?? flight.terminal ?? "--"}</span>
+                              <em className={`board-status tone-${flight.statusTone}`}>{flight.statusText}</em>
+                            </div>
+                          ))}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              )}
             </section>
           </section>
 

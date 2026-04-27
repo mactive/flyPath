@@ -33,5 +33,12 @@ export const upstream = {
     });
 
     return requestJson(`${env.UPSTREAM_PROXY_BASE_URL}/fr24/detail?${params.toString()}`);
+  },
+  fetchAirportSchedule(env: WorkerBindings, code: string) {
+    const params = new URLSearchParams({
+      code
+    });
+
+    return requestJson(`${env.UPSTREAM_PROXY_BASE_URL}/fr24/airport?${params.toString()}`);
   }
 };

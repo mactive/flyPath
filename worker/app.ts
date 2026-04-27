@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { getFlightDetail, getFlightSearch, getLatestSnapshot } from "./storage.js";
+import { getFlightDetail, getFlightSearch, getLatestSnapshot, getTopAirportBoards } from "./storage.js";
 import type { WorkerEnv } from "./bindings.js";
 
 const app = new Hono<WorkerEnv>();
@@ -44,6 +44,12 @@ app.get("/api/fr24/detail", async (c) => {
 
   const payload = await getFlightDetail(c.env, flight, version);
   c.header("Cache-Control", "public, max-age=30, stale-while-revalidate=90");
+  return c.json(payload);
+});
+
+app.get("/api/boards/top-airports", async (c) => {
+  const payload = await getTopAirportBoards(c.env);
+  c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=240");
   return c.json(payload);
 });
 

@@ -7,6 +7,8 @@ export interface WorkerBindings {
   SNAPSHOT_TTL_SECONDS?: string;
   DETAIL_TTL_SECONDS?: string;
   SEARCH_TTL_SECONDS?: string;
+  AIRPORT_BOARD_TTL_SECONDS?: string;
+  TOP_AIRPORT_CODES?: string;
   ENABLE_SNAPSHOT_ARCHIVE?: string;
 }
 

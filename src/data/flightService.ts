@@ -6,7 +6,13 @@ import {
   normalizeFlightFeed,
   normalizeSearchResults
 } from "../utils/flightTransforms";
-import type { FlightDetail, FlightFeedSnapshot, FlightSearchResult, FlightSummary } from "../types/flight";
+import type {
+  AirportBoardsSnapshot,
+  FlightDetail,
+  FlightFeedSnapshot,
+  FlightSearchResult,
+  FlightSummary
+} from "../types/flight";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? (import.meta.env.DEV ? "http://127.0.0.1:8787" : "");
 
@@ -77,4 +83,8 @@ export async function fetchFlightDetail(
 
   const detail = await fetchFlightDetailById(selected.id, signal);
   return { detail, searchResults };
+}
+
+export async function fetchTopAirportBoards(signal?: AbortSignal): Promise<AirportBoardsSnapshot> {
+  return requestJson<AirportBoardsSnapshot>("/api/boards/top-airports", signal);
 }
