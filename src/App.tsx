@@ -1,11 +1,43 @@
 import { lazy, Suspense, startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { GlobeBackdrop } from "./components/GlobeBackdrop";
-import { fetchFlightDetail, fetchFlightFeed, fetchTopAirportBoards } from "./data/flightService";
-import type { AirportBoard, FlightDetail, FlightSearchResult, FlightSummary } from "./types/flight";
+import { fetchFlightDetail, fetchFlightFeed, fetchLiveRoutes, fetchTopAirportBoards } from "./data/flightService";
+import type {
+  AirportBoard,
+  FlightDetail,
+  FlightSearchResult,
+  FlightSummary,
+  LiveRouteQueryFilters,
+  LiveRouteQuerySnapshot,
+  RouteHaulBucket
+} from "./types/flight";
 
 const REFRESH_MS = 60_000;
 const GLOBAL_RENDER_DIVISOR = 4;
 const FlightMap = lazy(async () => ({ default: (await import("./components/FlightMap")).FlightMap }));
+
+interface RouteFilterDraft {
+  airline: string;
+  aircraft: string;
+  origin: string;
+  destination: string;
+  haul: RouteHaulBucket | "";
+  country: string;
+  minDistanceKm: string;
+  maxDistanceKm: string;
+  onlyAirborne: boolean;
+}
+
+const DEFAULT_ROUTE_FILTERS: RouteFilterDraft = {
+  airline: "",
+  aircraft: "",
+  origin: "",
+  destination: "",
+  haul: "",
+  country: "",
+  minDistanceKm: "",
+  maxDistanceKm: "",
+  onlyAirborne: true
+};
 
 function formatTimestamp(timestamp?: number | null): string {
   if (!timestamp) {
@@ -17,6 +49,19 @@ function formatTimestamp(timestamp?: number | null): string {
     minute: "2-digit",
     timeZoneName: "short"
   }).format(timestamp * 1000);
+}
+
+function formatIsoTimestamp(timestamp?: string | null): string {
+  if (!timestamp) {
+    return "--";
+  }
+
+  const parsed = Date.parse(timestamp);
+  if (Number.isNaN(parsed)) {
+    return "--";
+  }
+
+  return formatTimestamp(Math.floor(parsed / 1000));
 }
 
 function formatRelativeMinutes(timestamp?: number | null): string {
@@ -115,6 +160,37 @@ function summarizeDensity(flights: FlightSummary[]) {
   );
 }
 
+function buildLiveRouteFilters(draft: RouteFilterDraft): LiveRouteQueryFilters {
+  const minDistanceKm = draft.minDistanceKm.trim();
+  const maxDistanceKm = draft.maxDistanceKm.trim();
+
+  return {
+    airline: draft.airline.trim() || undefined,
+    aircraft: draft.aircraft.trim() || undefined,
+    origin: draft.origin.trim().toUpperCase() || undefined,
+    destination: draft.destination.trim().toUpperCase() || undefined,
+    haul: draft.haul || undefined,
+    country: draft.country.trim() || undefined,
+    minDistanceKm: minDistanceKm ? Number(minDistanceKm) : undefined,
+    maxDistanceKm: maxDistanceKm ? Number(maxDistanceKm) : undefined,
+    onlyAirborne: draft.onlyAirborne,
+    limit: 250
+  };
+}
+
+function hasLiveRouteFilters(filters: LiveRouteQueryFilters): boolean {
+  return Boolean(
+    filters.airline ||
+      filters.aircraft ||
+      filters.origin ||
+      filters.destination ||
+      filters.haul ||
+      filters.country ||
+      filters.minDistanceKm ||
+      filters.maxDistanceKm
+  );
+}
+
 export default function App() {
   const [flights, setFlights] = useState<FlightSummary[]>([]);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
@@ -131,8 +207,15 @@ export default function App() {
   const [airportBoardsUpdatedAt, setAirportBoardsUpdatedAt] = useState<number | null>(null);
   const [airportBoardsLoading, setAirportBoardsLoading] = useState(true);
   const [airportBoardsError, setAirportBoardsError] = useState<string | null>(null);
+  const [routeFilters, setRouteFilters] = useState<RouteFilterDraft>(DEFAULT_ROUTE_FILTERS);
+  const [liveRouteSnapshot, setLiveRouteSnapshot] = useState<LiveRouteQuerySnapshot | null>(null);
+  const [liveRouteLoading, setLiveRouteLoading] = useState(false);
+  const [liveRouteError, setLiveRouteError] = useState<string | null>(null);
 
   const deferredQuery = useDeferredValue(query);
+  const deferredRouteFilters = useDeferredValue(routeFilters);
+  const liveRouteQuery = useMemo(() => buildLiveRouteFilters(deferredRouteFilters), [deferredRouteFilters]);
+  const liveRouteMode = useMemo(() => hasLiveRouteFilters(liveRouteQuery), [liveRouteQuery]);
 
   useEffect(() => {
     let active = true;
@@ -213,16 +296,69 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!liveRouteMode) {
+      setLiveRouteSnapshot(null);
+      setLiveRouteLoading(false);
+      setLiveRouteError(null);
+      return;
+    }
+
+    let active = true;
+    const controller = new AbortController();
+
+    const loadLiveRoutes = async () => {
+      setLiveRouteLoading(true);
+
+      try {
+        const snapshot = await fetchLiveRoutes(liveRouteQuery, controller.signal);
+
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setLiveRouteSnapshot(snapshot);
+          setLiveRouteError(null);
+        });
+      } catch (error) {
+        if (!active || controller.signal.aborted) {
+          return;
+        }
+
+        setLiveRouteError(error instanceof Error ? error.message : "Live route query failed");
+      } finally {
+        if (active && !controller.signal.aborted) {
+          setLiveRouteLoading(false);
+        }
+      }
+    };
+
+    void loadLiveRoutes();
+    const interval = window.setInterval(loadLiveRoutes, REFRESH_MS);
+
+    return () => {
+      active = false;
+      controller.abort();
+      window.clearInterval(interval);
+    };
+  }, [liveRouteMode, liveRouteQuery]);
+
+  const sourceFlights = useMemo<FlightSummary[]>(
+    () => (liveRouteMode && liveRouteSnapshot ? liveRouteSnapshot.flights : flights),
+    [flights, liveRouteMode, liveRouteSnapshot]
+  );
+
+  useEffect(() => {
     if (!selectedFlight) {
       return;
     }
 
-    const refreshed = flights.find((flight) => flight.id === selectedFlight.id);
+    const refreshed = sourceFlights.find((flight) => flight.id === selectedFlight.id);
 
     if (refreshed) {
       setSelectedFlight(refreshed);
     }
-  }, [flights, selectedFlight]);
+  }, [selectedFlight, sourceFlights]);
 
   useEffect(() => {
     if (!selectedFlight) {
@@ -263,7 +399,7 @@ export default function App() {
   const filteredFlights = useMemo(() => {
     const normalizedQuery = deferredQuery.trim().toLowerCase();
 
-    return flights.filter((flight) => {
+    return sourceFlights.filter((flight) => {
       const matchesCountry = activeCountry ? flight.country === activeCountry : true;
       const matchesQuery =
         !normalizedQuery ||
@@ -274,17 +410,17 @@ export default function App() {
 
       return matchesCountry && matchesQuery;
     });
-  }, [activeCountry, deferredQuery, flights]);
+  }, [activeCountry, deferredQuery, sourceFlights]);
 
   const renderedFlights = useMemo(() => {
-    if (activeCountry) {
+    if (activeCountry || liveRouteMode) {
       return filteredFlights;
     }
 
     return filteredFlights.filter((flight) => hashFlightId(flight.id) % GLOBAL_RENDER_DIVISOR === 0);
-  }, [activeCountry, filteredFlights]);
+  }, [activeCountry, filteredFlights, liveRouteMode]);
 
-  const density = useMemo(() => summarizeDensity(flights), [flights]);
+  const density = useMemo(() => summarizeDensity(sourceFlights), [sourceFlights]);
   const topCountries = useMemo(
     () =>
       Array.from(density.countries.entries())
@@ -299,13 +435,22 @@ export default function App() {
     [filteredFlights]
   );
   const countryFocusFlights = useMemo(
-    () => (activeCountry ? flights.filter((flight) => flight.country === activeCountry) : flights),
-    [activeCountry, flights]
+    () => (activeCountry ? sourceFlights.filter((flight) => flight.country === activeCountry) : sourceFlights),
+    [activeCountry, sourceFlights]
   );
   const airportBoardTrack = useMemo(
     () => (airportBoards.length > 0 ? [...airportBoards, ...airportBoards] : []),
     [airportBoards]
   );
+  const liveRouteHeadline = useMemo(() => {
+    if (!liveRouteSnapshot) {
+      return null;
+    }
+
+    const { coverage } = liveRouteSnapshot;
+    return `${coverage.enrichedFlights}/${coverage.activeFlights} indexed · ${coverage.pendingEnrichment} pending enrich`;
+  }, [liveRouteSnapshot]);
+  const liveRouteHighlights = useMemo(() => liveRouteSnapshot?.routes.slice(0, 6) ?? [], [liveRouteSnapshot]);
 
   useEffect(() => {
     if (!selectedFlight) {
@@ -339,7 +484,7 @@ export default function App() {
           <div className="topbar-metrics">
             <div className="metric-chip">
               <span>Tracked</span>
-              <strong>{formatFlightCount(flights.length)}</strong>
+              <strong>{formatFlightCount(sourceFlights.length)}</strong>
             </div>
             <div className="metric-chip">
               <span>Airborne</span>
@@ -347,7 +492,7 @@ export default function App() {
             </div>
             <div className="metric-chip">
               <span>Last sync</span>
-              <strong>{lastUpdated ? formatTimestamp(lastUpdated) : "--"}</strong>
+              <strong>{liveRouteMode ? formatIsoTimestamp(liveRouteSnapshot?.updatedAt) : formatTimestamp(lastUpdated)}</strong>
             </div>
           </div>
         </header>
@@ -376,6 +521,116 @@ export default function App() {
 
             <section className="rail-group">
               <div className="section-head compact">
+                <h3>Route intelligence</h3>
+                {liveRouteMode && <span className="badge">D1 live query</span>}
+              </div>
+              <div className="route-filter-grid">
+                <label className="search-box">
+                  <span className="search-label">Airline</span>
+                  <input
+                    type="text"
+                    value={routeFilters.airline}
+                    onChange={(event) => setRouteFilters((current) => ({ ...current, airline: event.target.value }))}
+                    placeholder="Emirates / EK"
+                  />
+                </label>
+                <label className="search-box">
+                  <span className="search-label">Aircraft</span>
+                  <input
+                    type="text"
+                    value={routeFilters.aircraft}
+                    onChange={(event) => setRouteFilters((current) => ({ ...current, aircraft: event.target.value }))}
+                    placeholder="A380 / B77W"
+                  />
+                </label>
+                <label className="search-box">
+                  <span className="search-label">Origin</span>
+                  <input
+                    type="text"
+                    value={routeFilters.origin}
+                    onChange={(event) => setRouteFilters((current) => ({ ...current, origin: event.target.value.toUpperCase() }))}
+                    placeholder="DXB"
+                  />
+                </label>
+                <label className="search-box">
+                  <span className="search-label">Destination</span>
+                  <input
+                    type="text"
+                    value={routeFilters.destination}
+                    onChange={(event) => setRouteFilters((current) => ({ ...current, destination: event.target.value.toUpperCase() }))}
+                    placeholder="LHR"
+                  />
+                </label>
+                <label className="search-box">
+                  <span className="search-label">Haul</span>
+                  <select
+                    value={routeFilters.haul}
+                    onChange={(event) =>
+                      setRouteFilters((current) => ({ ...current, haul: event.target.value as RouteHaulBucket | "" }))
+                    }
+                  >
+                    <option value="">Any</option>
+                    <option value="short">Short</option>
+                    <option value="medium">Medium</option>
+                    <option value="long">Long</option>
+                    <option value="ultra">Ultra</option>
+                  </select>
+                </label>
+                <label className="search-box">
+                  <span className="search-label">Country</span>
+                  <input
+                    type="text"
+                    value={routeFilters.country}
+                    onChange={(event) => setRouteFilters((current) => ({ ...current, country: event.target.value }))}
+                    placeholder="United Arab Emirates"
+                  />
+                </label>
+                <label className="search-box">
+                  <span className="search-label">Min route km</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={routeFilters.minDistanceKm}
+                    onChange={(event) => setRouteFilters((current) => ({ ...current, minDistanceKm: event.target.value }))}
+                    placeholder="4000"
+                  />
+                </label>
+                <label className="search-box">
+                  <span className="search-label">Max route km</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={routeFilters.maxDistanceKm}
+                    onChange={(event) => setRouteFilters((current) => ({ ...current, maxDistanceKm: event.target.value }))}
+                    placeholder="12000"
+                  />
+                </label>
+                <label className="inline-toggle">
+                  <input
+                    type="checkbox"
+                    checked={routeFilters.onlyAirborne}
+                    onChange={(event) =>
+                      setRouteFilters((current) => ({ ...current, onlyAirborne: event.target.checked }))
+                    }
+                  />
+                  <span>Only airborne tracks</span>
+                </label>
+                <button
+                  type="button"
+                  className="country-chip"
+                  onClick={() => setRouteFilters(DEFAULT_ROUTE_FILTERS)}
+                >
+                  <span>Clear route filters</span>
+                  <strong>Reset</strong>
+                </button>
+              </div>
+              {liveRouteLoading && <div className="status-banner">Refreshing D1 live route slice…</div>}
+              {liveRouteError && <div className="status-banner error">{liveRouteError}</div>}
+              {liveRouteMode && liveRouteHeadline && !liveRouteError && <div className="status-banner">{liveRouteHeadline}</div>}
+            </section>
+
+            <section className="rail-group">
+              <div className="section-head compact">
                 <h3>Countries</h3>
               </div>
               <div className="country-filter-grid">
@@ -385,7 +640,7 @@ export default function App() {
                   onClick={() => setActiveCountry(null)}
                 >
                   <span>World</span>
-                  <strong>{formatFlightCount(flights.length)}</strong>
+                  <strong>{formatFlightCount(sourceFlights.length)}</strong>
                 </button>
                 {topCountries.map(([country, count]) => (
                   <button
@@ -400,6 +655,27 @@ export default function App() {
                 ))}
               </div>
             </section>
+
+            {liveRouteMode && liveRouteHighlights.length > 0 && (
+              <section className="rail-group">
+                <div className="section-head compact">
+                  <h3>Live routes</h3>
+                </div>
+                <div className="list-grid">
+                  {liveRouteHighlights.map((route) => (
+                    <div key={route.routeKey} className="list-row route-summary-row">
+                      <div>
+                        <strong>{route.routeLabel}</strong>
+                        <span>
+                          {route.activeFlights} live · {route.distanceKm.toLocaleString("en-US")} km · {route.haulBucket}
+                        </span>
+                      </div>
+                      <em>{route.airlines[0] ?? "--"}</em>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
             <section className="rail-group">
               <div className="section-head compact">
@@ -436,7 +712,7 @@ export default function App() {
               </article>
               <article className="kpi-card">
                 <span>Grounded share</span>
-                <strong>{flights.length ? Math.round((density.grounded / flights.length) * 100) : 0}%</strong>
+                <strong>{sourceFlights.length ? Math.round((density.grounded / sourceFlights.length) * 100) : 0}%</strong>
               </article>
             </div>
           </aside>
@@ -449,7 +725,7 @@ export default function App() {
                 selectedFlight={selectedFlight}
                 selectedDetail={selectedDetail}
                 onSelectFlight={setSelectedFlight}
-                refreshing={refreshing}
+                refreshing={liveRouteMode ? liveRouteLoading : refreshing}
                 activeCountry={activeCountry}
               />
             </Suspense>
@@ -568,9 +844,7 @@ export default function App() {
                             {selectedDetail.aircraftModel ? ` · ${selectedDetail.aircraftModel}` : ""}
                           </p>
                         </div>
-                        <span className={`live-pill ${selectedDetail.live ? "live" : ""}`}>
-                          {selectedDetail.statusText}
-                        </span>
+                        <span className={`live-pill ${selectedDetail.live ? "live" : ""}`}>{selectedDetail.statusText}</span>
                       </div>
 
                       <div className="route-box">
@@ -613,9 +887,7 @@ export default function App() {
                         ))}
                       </div>
 
-                      {selectedDetail.imageCredit && (
-                        <p className="credit-note">Photo credit: {selectedDetail.imageCredit}</p>
-                      )}
+                      {selectedDetail.imageCredit && <p className="credit-note">Photo credit: {selectedDetail.imageCredit}</p>}
                     </div>
                   </div>
                 )}

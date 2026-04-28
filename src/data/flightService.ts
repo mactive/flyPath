@@ -10,6 +10,8 @@ import type {
   AirportBoardsSnapshot,
   FlightDetail,
   FlightFeedSnapshot,
+  LiveRouteQueryFilters,
+  LiveRouteQuerySnapshot,
   FlightSearchResult,
   FlightSummary
 } from "../types/flight";
@@ -87,4 +89,41 @@ export async function fetchFlightDetail(
 
 export async function fetchTopAirportBoards(signal?: AbortSignal): Promise<AirportBoardsSnapshot> {
   return requestJson<AirportBoardsSnapshot>("/api/boards/top-airports", signal);
+}
+
+export async function fetchLiveRoutes(
+  filters: LiveRouteQueryFilters,
+  signal?: AbortSignal
+): Promise<LiveRouteQuerySnapshot> {
+  const params = new URLSearchParams();
+
+  if (filters.airline) {
+    params.set("airline", filters.airline);
+  }
+  if (filters.aircraft) {
+    params.set("aircraft", filters.aircraft);
+  }
+  if (filters.origin) {
+    params.set("origin", filters.origin);
+  }
+  if (filters.destination) {
+    params.set("destination", filters.destination);
+  }
+  if (filters.haul) {
+    params.set("haul", filters.haul);
+  }
+  if (filters.country) {
+    params.set("country", filters.country);
+  }
+  if (typeof filters.minDistanceKm === "number" && Number.isFinite(filters.minDistanceKm)) {
+    params.set("minDistanceKm", String(Math.max(0, Math.round(filters.minDistanceKm))));
+  }
+  if (typeof filters.maxDistanceKm === "number" && Number.isFinite(filters.maxDistanceKm)) {
+    params.set("maxDistanceKm", String(Math.max(0, Math.round(filters.maxDistanceKm))));
+  }
+
+  params.set("onlyAirborne", filters.onlyAirborne === false ? "false" : "true");
+  params.set("limit", String(filters.limit ?? 250));
+
+  return requestJson<LiveRouteQuerySnapshot>(`/api/live-routes?${params.toString()}`, signal);
 }

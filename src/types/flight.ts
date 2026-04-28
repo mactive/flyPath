@@ -1,4 +1,5 @@
 export type FlightStatusTone = "ground" | "climbing" | "descending" | "cruise" | "approach";
+export type RouteHaulBucket = "short" | "medium" | "long" | "ultra";
 
 export interface FlightSummary {
   id: string;
@@ -125,4 +126,59 @@ export interface AirportBoard {
 export interface AirportBoardsSnapshot {
   boards: AirportBoard[];
   updatedAt: number;
+}
+
+export interface LiveRouteFlight extends FlightSummary {
+  flightNumber: string | null;
+  airlineName: string | null;
+  airlineIata: string | null;
+  airlineIcao: string | null;
+  aircraftModel: string | null;
+  registration: string | null;
+  routeKey: string | null;
+  originCode: string | null;
+  destinationCode: string | null;
+  distanceKm: number | null;
+  haulBucket: RouteHaulBucket | null;
+  statusText: string | null;
+  lastEnrichedAt: string | null;
+}
+
+export interface LiveRouteSummary {
+  routeKey: string;
+  routeLabel: string;
+  originCode: string;
+  originName: string;
+  destinationCode: string;
+  destinationName: string;
+  distanceKm: number;
+  haulBucket: RouteHaulBucket;
+  activeFlights: number;
+  airlines: string[];
+  aircraftModels: string[];
+  lastSeenAt: number;
+}
+
+export interface LiveRouteQueryFilters {
+  airline?: string;
+  aircraft?: string;
+  origin?: string;
+  destination?: string;
+  haul?: RouteHaulBucket | "";
+  country?: string;
+  minDistanceKm?: number;
+  maxDistanceKm?: number;
+  onlyAirborne?: boolean;
+  limit?: number;
+}
+
+export interface LiveRouteQuerySnapshot {
+  updatedAt: string;
+  coverage: {
+    activeFlights: number;
+    enrichedFlights: number;
+    pendingEnrichment: number;
+  };
+  flights: LiveRouteFlight[];
+  routes: LiveRouteSummary[];
 }

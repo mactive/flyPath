@@ -46,6 +46,7 @@ export interface RawFlightDetailPayload {
     model?: {
       text?: string;
     };
+    registration?: string;
   };
   airport?: {
     origin?: RawAirport;

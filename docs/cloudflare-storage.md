@@ -10,8 +10,8 @@ This project is a good fit for a split storage design on Cloudflare rather than 
   Stores the current global snapshot pointer, hot per-flight detail cache, route detail entities, and the latest route catalog snapshot.
 - `R2`
   Stores raw per-minute snapshot blobs for replay, audit, and future analytics.
-- `D1` optional
-  Only add this if we later need queryable history, alerting rules, user data, or durable derived aggregates.
+- `D1`
+  Stores queryable live-route state and becomes the primary filter engine once route intelligence moves beyond KV-level faceting.
 
 ## Why this split
 
@@ -32,6 +32,10 @@ This project is a good fit for a split storage design on Cloudflare rather than 
   Latest aggregated route list plus available filter facets for the UI.
 - R2: `snapshots/YYYY/MM/DD/HH/mm.json`
   Raw or normalized full snapshot captured each minute.
+- D1: `live_flights`
+  Current tracked flights plus the latest successful route, airline, aircraft, and airport enrichment fields.
+- D1: `route_profiles`
+  Normalized route metadata keyed by `origin-destination`.
 
 ## Suggested TTLs
 
@@ -55,16 +59,18 @@ This project is a good fit for a split storage design on Cloudflare rather than 
 7. API reads `flights:latest` from KV for fast global reads.
 8. API resolves a clicked flight detail from KV first, then upstream on miss, then writes back to KV.
 9. Every successful detail read also upserts a normalized `route-detail:<origin>-<destination>` entity and invalidates the cached route catalog snapshot.
+10. A separate D1 enrichment loop snapshots current live flights, picks a bounded batch of due airborne tracks, resolves search + detail upstreams, and updates `live_flights` / `route_profiles`.
 
-## When to introduce D1
+## When to rely on D1
 
-Use D1 only if we need:
+Use D1 when we need:
 
 - historical flight queries by country / airline / airport
 - route history with exact counts over time
 - materialized alert history
 - user-saved watchlists or rules
 - ad hoc dashboards over historical metadata
+- complex live filters such as "Emirates airborne routes" or "A380 from DXB with route distance > 4000km"
 
 ## Practical note
 

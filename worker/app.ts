@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { queryLiveRoutes } from "./routeDb.js";
 import {
   getCachedRouteDetail,
   getFlightDetail,
@@ -90,6 +91,29 @@ app.get("/api/routes/detail", async (c) => {
   }
 
   c.header("Cache-Control", "public, max-age=120, stale-while-revalidate=600");
+  return c.json(payload);
+});
+
+app.get("/api/live-routes", async (c) => {
+  const minDistanceKm = c.req.query("minDistanceKm");
+  const maxDistanceKm = c.req.query("maxDistanceKm");
+  const limit = Math.max(1, Math.min(500, Number(c.req.query("limit") ?? "250") || 250));
+  const onlyAirborne = c.req.query("onlyAirborne");
+
+  const payload = await queryLiveRoutes(c.env, {
+    airline: c.req.query("airline")?.trim(),
+    aircraft: c.req.query("aircraft")?.trim(),
+    origin: c.req.query("origin")?.trim(),
+    destination: c.req.query("destination")?.trim(),
+    haul: c.req.query("haul")?.trim(),
+    country: c.req.query("country")?.trim(),
+    minDistanceKm: minDistanceKm ? Number(minDistanceKm) : undefined,
+    maxDistanceKm: maxDistanceKm ? Number(maxDistanceKm) : undefined,
+    onlyAirborne: onlyAirborne ? onlyAirborne !== "false" : true,
+    limit
+  });
+
+  c.header("Cache-Control", "public, max-age=20, stale-while-revalidate=40");
   return c.json(payload);
 });
 

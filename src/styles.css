@@ -39,7 +39,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -271,9 +272,40 @@ input {
   outline: none;
 }
 
-.search-box input:focus {
+.search-box select {
+  width: 100%;
+  padding: 13px 14px;
+  border: 1px solid rgba(129, 213, 250, 0.12);
+  background: rgba(3, 9, 14, 0.88);
+  color: var(--text);
+  outline: none;
+}
+
+.search-box input:focus,
+.search-box select:focus {
   border-color: rgba(94, 244, 205, 0.38);
   box-shadow: 0 0 0 1px rgba(94, 244, 205, 0.12);
+}
+
+.route-filter-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.inline-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.022);
+  color: var(--muted);
+}
+
+.inline-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
 }
 
 .kpi-stack,
@@ -341,6 +373,26 @@ input {
   padding: 11px 12px;
   border: 1px solid rgba(255, 255, 255, 0.04);
   background: rgba(255, 255, 255, 0.022);
+}
+
+.route-summary-row {
+  align-items: flex-start;
+}
+
+.route-summary-row strong,
+.route-summary-row em {
+  font-family: var(--mono);
+}
+
+.route-summary-row div {
+  display: grid;
+  gap: 4px;
+}
+
+.route-summary-row em {
+  color: var(--accent-cold);
+  font-style: normal;
+  white-space: nowrap;
 }
 
 .list-row span,

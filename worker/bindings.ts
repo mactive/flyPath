@@ -2,6 +2,7 @@ export interface WorkerBindings {
   ASSETS: Fetcher;
   FLIGHT_CACHE: KVNamespace;
   SNAPSHOT_ARCHIVE: R2Bucket;
+  ROUTE_DB?: D1Database;
   UPSTREAM_BASE_URL: string;
   UPSTREAM_PROXY_BASE_URL: string;
   SNAPSHOT_TTL_SECONDS?: string;
@@ -11,6 +12,11 @@ export interface WorkerBindings {
   ROUTE_DETAIL_TTL_SECONDS?: string;
   ROUTE_CATALOG_TTL_SECONDS?: string;
   ROUTE_CATALOG_SCAN_LIMIT?: string;
+  LIVE_ROUTE_STALE_SECONDS?: string;
+  LIVE_ROUTE_ENRICH_BATCH_SIZE?: string;
+  LIVE_ROUTE_SUCCESS_REVALIDATE_SECONDS?: string;
+  LIVE_ROUTE_ERROR_BACKOFF_SECONDS?: string;
+  LIVE_ROUTE_MAX_BACKOFF_SECONDS?: string;
   TOP_AIRPORT_CODES?: string;
   ENABLE_SNAPSHOT_ARCHIVE?: string;
 }

@@ -22,6 +22,14 @@
       "bucket_name": "sidecar-flight-monitor-snapshots"
     }
   ],
+  // Configure a real D1 database before deploy:
+  // "d1_databases": [
+  //   {
+  //     "binding": "ROUTE_DB",
+  //     "database_name": "sidecar-flight-monitor-routes",
+  //     "database_id": "<fill-your-d1-database-id>"
+  //   }
+  // ],
   "vars": {
     "UPSTREAM_BASE_URL": "https://flight-viz.com",
     "UPSTREAM_PROXY_BASE_URL": "https://flight-viz-proxy.flight-viz.workers.dev",
@@ -32,6 +40,11 @@
     "ROUTE_DETAIL_TTL_SECONDS": "2592000",
     "ROUTE_CATALOG_TTL_SECONDS": "300",
     "ROUTE_CATALOG_SCAN_LIMIT": "500",
+    "LIVE_ROUTE_STALE_SECONDS": "600",
+    "LIVE_ROUTE_ENRICH_BATCH_SIZE": "24",
+    "LIVE_ROUTE_SUCCESS_REVALIDATE_SECONDS": "720",
+    "LIVE_ROUTE_ERROR_BACKOFF_SECONDS": "120",
+    "LIVE_ROUTE_MAX_BACKOFF_SECONDS": "1800",
     "TOP_AIRPORT_CODES": "HND,ATL,DXB,LHR,DFW,DEN,IST,ORD,LAX,DEL,CDG,AMS,FRA,SIN,ICN,CAN,PVG,JFK,BKK,MAD",
     "ENABLE_SNAPSHOT_ARCHIVE": "true"
   },

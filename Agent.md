@@ -26,6 +26,7 @@ Backend:
 - Wrangler
 - Cloudflare KV
 - Cloudflare R2
+- Cloudflare D1
 
 Fallback local/server mode:
 - Hono on Node via `@hono/node-server`
@@ -146,10 +147,12 @@ Meaning:
 Worker-only cached route APIs:
 - `GET /api/routes/catalog`
 - `GET /api/routes/detail`
+- `GET /api/live-routes`
 
 Meaning:
 - `/api/routes/catalog` returns cached route summaries plus filter facets for airline / aircraft / haul / airport / country
 - `/api/routes/detail` returns a normalized cached route entity keyed by `origin-destination`
+- `/api/live-routes` queries the D1-backed current live route index and returns flights plus aggregated route matches for map rendering
 
 ## Caching Strategy
 
@@ -163,6 +166,11 @@ KV:
 - top airport boards cache
 - route detail entity cache
 - route catalog snapshot cache
+
+D1:
+- live flight index
+- route profiles
+- bounded enrich scheduling state stored on current live flight rows
 
 R2:
 - archived minute-level full flight snapshots
@@ -184,6 +192,8 @@ Current TTL defaults from `wrangler.jsonc`:
 - airport boards: `240s`
 - route detail: `2592000s`
 - route catalog: `300s`
+- live route success revalidate: `720s`
+- live route enrich batch: `24`
 
 ### Node fallback
 
