@@ -1,6 +1,13 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { getFlightDetail, getFlightSearch, getLatestSnapshot, getTopAirportBoards } from "./storage.js";
+import {
+  getCachedRouteDetail,
+  getFlightDetail,
+  getFlightSearch,
+  getLatestSnapshot,
+  getRouteCatalog,
+  getTopAirportBoards
+} from "./storage.js";
 import type { WorkerEnv } from "./bindings.js";
 
 const app = new Hono<WorkerEnv>();
@@ -50,6 +57,39 @@ app.get("/api/fr24/detail", async (c) => {
 app.get("/api/boards/top-airports", async (c) => {
   const payload = await getTopAirportBoards(c.env);
   c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=240");
+  return c.json(payload);
+});
+
+app.get("/api/routes/catalog", async (c) => {
+  const limit = Math.max(1, Math.min(250, Number(c.req.query("limit") ?? "80") || 80));
+  const payload = await getRouteCatalog(c.env, {
+    airline: c.req.query("airline")?.trim(),
+    aircraft: c.req.query("aircraft")?.trim(),
+    haul: c.req.query("haul")?.trim(),
+    origin: c.req.query("origin")?.trim(),
+    destination: c.req.query("destination")?.trim(),
+    country: c.req.query("country")?.trim(),
+    limit
+  });
+
+  c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+  return c.json(payload);
+});
+
+app.get("/api/routes/detail", async (c) => {
+  const route = c.req.query("route")?.trim() ?? "";
+
+  if (!route) {
+    return c.json({ error: "route is required" }, 400);
+  }
+
+  const payload = await getCachedRouteDetail(c.env, route);
+
+  if (!payload) {
+    return c.json({ error: "route detail not found in cache" }, 404);
+  }
+
+  c.header("Cache-Control", "public, max-age=120, stale-while-revalidate=600");
   return c.json(payload);
 });
 

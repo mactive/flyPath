@@ -1,5 +1,15 @@
-import { KV_KEYS, envFlag, envNumber } from "./constants.js";
 import type { WorkerBindings } from "./bindings.js";
+import { KV_KEYS, envFlag, envNumber } from "./constants.js";
+import {
+  buildRouteCatalogSnapshot,
+  buildRouteDetail,
+  filterRouteCatalogSnapshot,
+  mergeRouteDetail,
+  type CachedRouteDetail,
+  type RawFlightDetailPayload,
+  type RouteCatalogFilters,
+  type RouteCatalogSnapshot
+} from "./routeCache.js";
 import { upstream } from "./upstream.js";
 
 const DEFAULT_TOP_AIRPORT_CODES = [
@@ -209,6 +219,75 @@ function archiveKey(now = new Date()) {
   return `snapshots/${year}/${month}/${day}/${minute}.json`;
 }
 
+function normalizeRouteKey(routeKey: string) {
+  return routeKey.trim().toUpperCase();
+}
+
+async function persistRouteDetail(env: WorkerBindings, payload: RawFlightDetailPayload, version: string) {
+  const nextRouteDetail = buildRouteDetail(payload, version);
+
+  if (!nextRouteDetail) {
+    return null;
+  }
+
+  const key = KV_KEYS.routeDetail(nextRouteDetail.routeKey);
+  const existing = (await env.FLIGHT_CACHE.get(key, "json")) as CachedRouteDetail | null;
+  const merged = mergeRouteDetail(existing, nextRouteDetail);
+
+  await env.FLIGHT_CACHE.put(key, JSON.stringify(merged), {
+    expirationTtl: envNumber(env.ROUTE_DETAIL_TTL_SECONDS, 60 * 60 * 24 * 30)
+  });
+
+  await env.FLIGHT_CACHE.delete(KV_KEYS.routeCatalog);
+  return merged;
+}
+
+async function listRouteDetails(env: WorkerBindings, scanLimit: number) {
+  const routes: CachedRouteDetail[] = [];
+  let cursor: string | undefined;
+  let truncated = false;
+
+  while (routes.length < scanLimit) {
+    const page = await env.FLIGHT_CACHE.list({
+      prefix: KV_KEYS.routeDetailPrefix,
+      cursor,
+      limit: Math.min(1000, scanLimit - routes.length)
+    });
+
+    if (page.keys.length === 0) {
+      truncated = !page.list_complete;
+      break;
+    }
+
+    const batch = await Promise.all(
+      page.keys.map(async ({ name }) => (await env.FLIGHT_CACHE.get(name, "json")) as CachedRouteDetail | null)
+    );
+
+    for (const entry of batch) {
+      if (entry) {
+        routes.push(entry);
+      }
+    }
+
+    if (page.list_complete) {
+      break;
+    }
+
+    if (routes.length >= scanLimit) {
+      truncated = true;
+      break;
+    }
+
+    cursor = page.cursor;
+    truncated = true;
+  }
+
+  return {
+    routes,
+    truncated
+  };
+}
+
 export async function refreshLatestSnapshot(env: WorkerBindings) {
   const payload = await upstream.fetchStatesAll(env);
   const snapshotTtl = envNumber(env.SNAPSHOT_TTL_SECONDS, 90);
@@ -269,6 +348,22 @@ export async function refreshTopAirportBoards(env: WorkerBindings) {
   return payload;
 }
 
+export async function refreshRouteCatalog(env: WorkerBindings) {
+  const routeCatalogTtl = envNumber(env.ROUTE_CATALOG_TTL_SECONDS, 300);
+  const scanLimit = envNumber(env.ROUTE_CATALOG_SCAN_LIMIT, 500);
+  const listed = await listRouteDetails(env, scanLimit);
+  const snapshot = buildRouteCatalogSnapshot(listed.routes, {
+    updatedAt: new Date().toISOString(),
+    truncated: listed.truncated
+  });
+
+  await env.FLIGHT_CACHE.put(KV_KEYS.routeCatalog, JSON.stringify(snapshot), {
+    expirationTtl: routeCatalogTtl
+  });
+
+  return snapshot;
+}
+
 export async function getLatestSnapshot(env: WorkerBindings) {
   const cached = await env.FLIGHT_CACHE.get(KV_KEYS.latestSnapshot, "json");
 
@@ -306,15 +401,28 @@ export async function getFlightSearch(env: WorkerBindings, query: string, limit:
 
 export async function getFlightDetail(env: WorkerBindings, flightId: string, version: string) {
   const key = KV_KEYS.detail(flightId, version);
-  const cached = await env.FLIGHT_CACHE.get(key, "json");
+  const cached = (await env.FLIGHT_CACHE.get(key, "json")) as RawFlightDetailPayload | null;
 
   if (cached) {
+    await persistRouteDetail(env, cached, version);
     return cached;
   }
 
-  const payload = await upstream.fetchFlightDetail(env, flightId, version);
+  const payload = (await upstream.fetchFlightDetail(env, flightId, version)) as RawFlightDetailPayload;
   await env.FLIGHT_CACHE.put(key, JSON.stringify(payload), {
     expirationTtl: envNumber(env.DETAIL_TTL_SECONDS, 1800)
   });
+  await persistRouteDetail(env, payload, version);
   return payload;
+}
+
+export async function getCachedRouteDetail(env: WorkerBindings, routeKey: string) {
+  const cached = await env.FLIGHT_CACHE.get(KV_KEYS.routeDetail(normalizeRouteKey(routeKey)), "json");
+  return (cached as CachedRouteDetail | null) ?? null;
+}
+
+export async function getRouteCatalog(env: WorkerBindings, filters: RouteCatalogFilters) {
+  const cached = await env.FLIGHT_CACHE.get(KV_KEYS.routeCatalog, "json");
+  const resolvedSnapshot = cached ? (cached as RouteCatalogSnapshot) : await refreshRouteCatalog(env);
+  return filterRouteCatalogSnapshot(resolvedSnapshot, filters);
 }

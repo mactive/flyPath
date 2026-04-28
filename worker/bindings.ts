@@ -8,6 +8,9 @@ export interface WorkerBindings {
   DETAIL_TTL_SECONDS?: string;
   SEARCH_TTL_SECONDS?: string;
   AIRPORT_BOARD_TTL_SECONDS?: string;
+  ROUTE_DETAIL_TTL_SECONDS?: string;
+  ROUTE_CATALOG_TTL_SECONDS?: string;
+  ROUTE_CATALOG_SCAN_LIMIT?: string;
   TOP_AIRPORT_CODES?: string;
   ENABLE_SNAPSHOT_ARCHIVE?: string;
 }

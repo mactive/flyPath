@@ -143,6 +143,14 @@ Meaning:
 - `/api/fr24/detail` resolves a single flight detail payload
 - `/api/boards/top-airports` returns aggregated departure boards for configured top airports
 
+Worker-only cached route APIs:
+- `GET /api/routes/catalog`
+- `GET /api/routes/detail`
+
+Meaning:
+- `/api/routes/catalog` returns cached route summaries plus filter facets for airline / aircraft / haul / airport / country
+- `/api/routes/detail` returns a normalized cached route entity keyed by `origin-destination`
+
 ## Caching Strategy
 
 ### Cloudflare
@@ -153,6 +161,8 @@ KV:
 - flight search cache
 - flight detail cache
 - top airport boards cache
+- route detail entity cache
+- route catalog snapshot cache
 
 R2:
 - archived minute-level full flight snapshots
@@ -172,6 +182,8 @@ Current TTL defaults from `wrangler.jsonc`:
 - search: `300s`
 - detail: `1800s`
 - airport boards: `240s`
+- route detail: `2592000s`
+- route catalog: `300s`
 
 ### Node fallback
 
