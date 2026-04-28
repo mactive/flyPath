@@ -145,81 +145,79 @@ export interface LiveRouteQueryResponse {
   }>;
 }
 
-const ROUTE_DB_SCHEMA = `
-CREATE TABLE IF NOT EXISTS route_profiles (
-  route_key TEXT PRIMARY KEY,
-  route_label TEXT NOT NULL,
-  origin_code TEXT NOT NULL,
-  origin_iata TEXT NOT NULL,
-  origin_icao TEXT NOT NULL,
-  origin_name TEXT NOT NULL,
-  origin_city TEXT,
-  origin_country TEXT,
-  origin_lat REAL NOT NULL,
-  origin_lng REAL NOT NULL,
-  destination_code TEXT NOT NULL,
-  destination_iata TEXT NOT NULL,
-  destination_icao TEXT NOT NULL,
-  destination_name TEXT NOT NULL,
-  destination_city TEXT,
-  destination_country TEXT,
-  destination_lat REAL NOT NULL,
-  destination_lng REAL NOT NULL,
-  distance_km INTEGER NOT NULL,
-  haul_bucket TEXT NOT NULL,
-  first_seen_at TEXT NOT NULL,
-  last_seen_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS live_flights (
-  state_id TEXT PRIMARY KEY,
-  callsign TEXT NOT NULL,
-  country TEXT NOT NULL,
-  latitude REAL NOT NULL,
-  longitude REAL NOT NULL,
-  altitude_ft INTEGER NOT NULL,
-  ground_speed_kts INTEGER NOT NULL,
-  heading INTEGER NOT NULL,
-  vertical_rate_fpm INTEGER NOT NULL,
-  on_ground INTEGER NOT NULL,
-  squawk TEXT,
-  last_contact INTEGER NOT NULL,
-  snapshot_time INTEGER NOT NULL,
-  status_label TEXT NOT NULL,
-  tone TEXT NOT NULL,
-  route_key TEXT,
-  flight_number TEXT,
-  airline_name TEXT,
-  airline_iata TEXT,
-  airline_icao TEXT,
-  aircraft_model TEXT,
-  registration TEXT,
-  fr24_flight_id TEXT,
-  status_text TEXT,
-  detail_live INTEGER,
-  scheduled_departure INTEGER,
-  scheduled_arrival INTEGER,
-  origin_code TEXT,
-  destination_code TEXT,
-  distance_km INTEGER,
-  haul_bucket TEXT,
-  last_enriched_at TEXT,
-  next_enrich_after TEXT,
-  enrich_attempts INTEGER NOT NULL DEFAULT 0,
-  last_enrich_error TEXT,
-  FOREIGN KEY(route_key) REFERENCES route_profiles(route_key)
-);
-
-CREATE INDEX IF NOT EXISTS idx_live_flights_snapshot_time ON live_flights(snapshot_time);
-CREATE INDEX IF NOT EXISTS idx_live_flights_enrich_due ON live_flights(next_enrich_after, on_ground, snapshot_time);
-CREATE INDEX IF NOT EXISTS idx_live_flights_airline_name ON live_flights(airline_name);
-CREATE INDEX IF NOT EXISTS idx_live_flights_airline_iata ON live_flights(airline_iata);
-CREATE INDEX IF NOT EXISTS idx_live_flights_aircraft_model ON live_flights(aircraft_model);
-CREATE INDEX IF NOT EXISTS idx_live_flights_origin_code ON live_flights(origin_code);
-CREATE INDEX IF NOT EXISTS idx_live_flights_destination_code ON live_flights(destination_code);
-CREATE INDEX IF NOT EXISTS idx_live_flights_distance_km ON live_flights(distance_km);
-CREATE INDEX IF NOT EXISTS idx_live_flights_route_key ON live_flights(route_key);
-`;
+const ROUTE_DB_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS route_profiles (
+    route_key TEXT PRIMARY KEY,
+    route_label TEXT NOT NULL,
+    origin_code TEXT NOT NULL,
+    origin_iata TEXT NOT NULL,
+    origin_icao TEXT NOT NULL,
+    origin_name TEXT NOT NULL,
+    origin_city TEXT,
+    origin_country TEXT,
+    origin_lat REAL NOT NULL,
+    origin_lng REAL NOT NULL,
+    destination_code TEXT NOT NULL,
+    destination_iata TEXT NOT NULL,
+    destination_icao TEXT NOT NULL,
+    destination_name TEXT NOT NULL,
+    destination_city TEXT,
+    destination_country TEXT,
+    destination_lat REAL NOT NULL,
+    destination_lng REAL NOT NULL,
+    distance_km INTEGER NOT NULL,
+    haul_bucket TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS live_flights (
+    state_id TEXT PRIMARY KEY,
+    callsign TEXT NOT NULL,
+    country TEXT NOT NULL,
+    latitude REAL NOT NULL,
+    longitude REAL NOT NULL,
+    altitude_ft INTEGER NOT NULL,
+    ground_speed_kts INTEGER NOT NULL,
+    heading INTEGER NOT NULL,
+    vertical_rate_fpm INTEGER NOT NULL,
+    on_ground INTEGER NOT NULL,
+    squawk TEXT,
+    last_contact INTEGER NOT NULL,
+    snapshot_time INTEGER NOT NULL,
+    status_label TEXT NOT NULL,
+    tone TEXT NOT NULL,
+    route_key TEXT,
+    flight_number TEXT,
+    airline_name TEXT,
+    airline_iata TEXT,
+    airline_icao TEXT,
+    aircraft_model TEXT,
+    registration TEXT,
+    fr24_flight_id TEXT,
+    status_text TEXT,
+    detail_live INTEGER,
+    scheduled_departure INTEGER,
+    scheduled_arrival INTEGER,
+    origin_code TEXT,
+    destination_code TEXT,
+    distance_km INTEGER,
+    haul_bucket TEXT,
+    last_enriched_at TEXT,
+    next_enrich_after TEXT,
+    enrich_attempts INTEGER NOT NULL DEFAULT 0,
+    last_enrich_error TEXT,
+    FOREIGN KEY(route_key) REFERENCES route_profiles(route_key)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_live_flights_snapshot_time ON live_flights(snapshot_time)`,
+  `CREATE INDEX IF NOT EXISTS idx_live_flights_enrich_due ON live_flights(next_enrich_after, on_ground, snapshot_time)`,
+  `CREATE INDEX IF NOT EXISTS idx_live_flights_airline_name ON live_flights(airline_name)`,
+  `CREATE INDEX IF NOT EXISTS idx_live_flights_airline_iata ON live_flights(airline_iata)`,
+  `CREATE INDEX IF NOT EXISTS idx_live_flights_aircraft_model ON live_flights(aircraft_model)`,
+  `CREATE INDEX IF NOT EXISTS idx_live_flights_origin_code ON live_flights(origin_code)`,
+  `CREATE INDEX IF NOT EXISTS idx_live_flights_destination_code ON live_flights(destination_code)`,
+  `CREATE INDEX IF NOT EXISTS idx_live_flights_distance_km ON live_flights(distance_km)`,
+  `CREATE INDEX IF NOT EXISTS idx_live_flights_route_key ON live_flights(route_key)`
+] as const;
 
 let schemaReady: Promise<void> | null = null;
 
@@ -234,7 +232,11 @@ function getRouteDb(env: WorkerBindings): D1Database {
 async function ensureRouteDbSchema(env: WorkerBindings) {
   if (!schemaReady) {
     const db = getRouteDb(env);
-    schemaReady = db.exec(ROUTE_DB_SCHEMA).then(() => undefined);
+    schemaReady = (async () => {
+      for (const statement of ROUTE_DB_SCHEMA_STATEMENTS) {
+        await db.exec(statement);
+      }
+    })();
   }
 
   return schemaReady;
