@@ -233,8 +233,13 @@ async function ensureRouteDbSchema(env: WorkerBindings) {
   if (!schemaReady) {
     const db = getRouteDb(env);
     schemaReady = (async () => {
-      for (const statement of ROUTE_DB_SCHEMA_STATEMENTS) {
-        await db.exec(statement);
+      try {
+        for (const statement of ROUTE_DB_SCHEMA_STATEMENTS) {
+          await db.prepare(statement).run();
+        }
+      } catch (error) {
+        schemaReady = null;
+        throw error;
       }
     })();
   }
