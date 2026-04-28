@@ -22,14 +22,13 @@
       "bucket_name": "sidecar-flight-monitor-snapshots"
     }
   ],
-  // Configure a real D1 database before deploy:
-  // "d1_databases": [
-  //   {
-  //     "binding": "ROUTE_DB",
-  //     "database_name": "sidecar-flight-monitor-routes",
-  //     "database_id": "<fill-your-d1-database-id>"
-  //   }
-  // ],
+  "d1_databases": [
+    {
+      "binding": "ROUTE_DB",
+      "database_name": "sidecar-flight-monitor-routes",
+      "database_id": "6212058c-4c25-4982-aa7e-64c31fc10d4a"
+    }
+  ],
   "vars": {
     "UPSTREAM_BASE_URL": "https://flight-viz.com",
     "UPSTREAM_PROXY_BASE_URL": "https://flight-viz-proxy.flight-viz.workers.dev",
@@ -49,6 +48,8 @@
     "ENABLE_SNAPSHOT_ARCHIVE": "true"
   },
   "triggers": {
-    "crons": ["* * * * *"]
+    "crons": [
+      "* * * * *"
+    ]
   }
 }
